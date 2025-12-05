@@ -3,19 +3,17 @@
 
 """Format Identification for Digital Objects."""
 
-from __future__ import print_function
-
 from argparse import ArgumentParser
+from functools import cmp_to_key
 import hashlib
+import io
 import sys
 from xml.dom import minidom
 from xml.etree import ElementTree as ET
 import zipfile
-
-from six.moves import cStringIO
-from six.moves.urllib.request import urlopen
-from six.moves.urllib.parse import urlparse
-from six.moves.urllib.error import HTTPError
+from urllib.request import urlopen
+from urllib.parse import urlparse
+from urllib.error import HTTPError
 
 from .versions import get_local_versions
 from .char_handler import escape
@@ -90,8 +88,8 @@ class FormatInfo:
             # if f.find('signature'):
             root.append(f)
         self.indent(root)
-        with open(dst, 'wb') as file_:
-            file_.write(ET.tostring(root))
+        with open(dst, 'wb') as file_handle:
+            tree.write(file_handle, encoding='utf-8', xml_declaration=True)
 
     def indent(self, elem, level=0):
         """Indent output."""
@@ -123,20 +121,19 @@ class FormatInfo:
         If a @param puid is specified, only that one will be loaded.
         """
         formats = []
+        zip_file = None
         try:
-            zip = zipfile.ZipFile(self.pronom_files, 'r')
-            for item in zip.infolist():
-                try:
-                    stream = zip.open(item)
-                    # Work is done here!
-                    format_ = self.parse_pronom_xml(stream, puid_filter)
+            zip_file = zipfile.ZipFile(str(self.pronom_files), 'r')
+            for item in zip_file.infolist():
+                with zip_file.open(item) as stream:
+                    format_ = self.parse_pronom_xml(io.BytesIO(stream.read()), puid_filter)
                     if format_ is not None:
                         formats.append(format_)
-                finally:
-                    stream.close()
-        finally:
+        except Exception as e:
+            print("An error occurred loading '{0}' (exception: {1})".format(self.pronom_files, e), file=sys.stderr)
             try:
-                zip.close()
+                if zip_file:
+                    zip_file.close()
             except Exception as e:
                 print("An error occured loading '{0}' (exception: {1})".format(self.pronom_files, e), file=sys.stderr)
                 sys.exit()
@@ -330,37 +327,7 @@ class FormatInfo:
             if f1ID == f2ID:
                 return 0
             return 1
-        return sorted(formatlist, key=_cmp_to_key(compare_formats))
-
-
-def _cmp_to_key(mycmp):
-    """Convert a cmp= function into a key= function."""
-    # From https://docs.python.org/3/howto/sorting.html#sortinghowto
-    class K:
-        """Wrapper class for comparator function."""
-
-        def __init__(self, obj, *_):
-            self.obj = obj
-
-        def __lt__(self, other):
-            return mycmp(self.obj, other.obj) < 0
-
-        def __gt__(self, other):
-            return mycmp(self.obj, other.obj) > 0
-
-        def __eq__(self, other):
-            return mycmp(self.obj, other.obj) == 0
-
-        def __le__(self, other):
-            return mycmp(self.obj, other.obj) <= 0
-
-        def __ge__(self, other):
-            return mycmp(self.obj, other.obj) >= 0
-
-        def __ne__(self, other):
-            return mycmp(self.obj, other.obj) != 0
-
-    return K
+        return sorted(formatlist, key=cmp_to_key(compare_formats))
 
 
 def fido_position(pronom_position):
@@ -390,7 +357,7 @@ def do_byte(chars, i, littleendian, esc=True):
     """
     c1 = '0123456789ABCDEF'.find(chars[i].upper())
     c2 = '0123456789ABCDEF'.find(chars[i + 1].upper())
-    buf = cStringIO()
+    buf = io.StringIO()
     if (c1 < 0 or c2 < 0):
         raise Exception(_convert_err_msg('bad byte sequence', chars[i:i + 2], i, chars, buf))
     if littleendian:
@@ -413,7 +380,7 @@ def calculate_repetition(char, pos, offset, maxoffset):
     This function only has an effect when one or both offsets is greater than
     MAX_REGEX_REPS bytes (4GB). See: https://bugs.python.org/issue13169.
     """
-    calcbuf = cStringIO()
+    calcbuf = io.StringIO()
 
     calcremain = False
     offsetremain = 0
@@ -510,7 +477,7 @@ def convert_to_regex(chars, endianness='', pos='BOF', offset='0', maxoffset=''):
         maxoffset = None
     if maxoffset == '0':
         maxoffset = None
-    buf = cStringIO()
+    buf = io.StringIO()
     buf.write("(?s)")  # If a regex starts with (?s), it is equivalent to DOTALL.
     i = 0
     state = 'start'

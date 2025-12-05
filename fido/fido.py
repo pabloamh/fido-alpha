@@ -3,7 +3,7 @@
 
 """
 Format Identification for Digital Objects (FIDO).
-
+ 
 FIDO is a command-line tool to identify the file formats of digital objects.
 It is designed for simple integration into automated work-flows.
 """
@@ -11,7 +11,7 @@ It is designed for simple integration into automated work-flows.
 from __future__ import absolute_import
 
 from argparse import ArgumentParser, RawTextHelpFormatter
-from contextlib import closing
+from contextlib import closing, suppress
 import os
 import platform
 import re
@@ -23,7 +23,7 @@ try:
 except ImportError:
     from time import clock as perf_counter
 
-from xml.etree import cElementTree as ET
+from xml.etree import ElementTree as ET
 import zipfile
 
 from six import PY2
@@ -94,14 +94,14 @@ class Fido:
         self.nocontainer = nocontainer
         self.conf_dir = conf_dir
         self.format_files = defaults['format_files'] if format_files is None else format_files
-        self.containersignature_file = defaults['containersignature_file']
+        self.containersignature_file = containersignature_file or defaults['containersignature_file']
         self.formats = []
         self.puid_format_map = {}
         self.puid_has_priority_over_map = {}
         # load signatures
         for xml_file in self.format_files:
             self.load_fido_xml(os.path.join(os.path.abspath(self.conf_dir), xml_file))
-        self.current_file = ''
+        self.current_file = None
         self.current_filesize = 0
         self.current_format = None
         self.current_sig = None
@@ -178,10 +178,10 @@ class Fido:
         The format of the dictionary is:
 
         {
-            path_to_file_inside_zip: {puid: [signatures]}
+            "path_to_file_inside_zip": {"puid": [signatures]}
         }
         """
-        root = doc.getroot()
+        root = ET.parse(doc).getroot()
         format_mappings = root.find("FileFormatMappings")
 
         def get_puid(doc, element_id):
@@ -214,7 +214,7 @@ class Fido:
         """Return the signature matches for a container."""
         puids = klass(file, self.extract_signatures(signature_file, signature_type=signature_type)).detect_formats()
         results = []
-        for puid in puids:
+        for puid in sorted(list(puids)):
             format = self.puid_format_map[puid]
             signature = format.findtext("name")
             results.append((format, signature))
@@ -358,16 +358,16 @@ class Fido:
         self.matchtype = "signature"
         try:
             timer = PerfTimer()
-            f = open(filename, 'rb')
-            size = os.stat(filename)[6]
+            with open(str(filename), 'rb') as f:
+                size = os.fstat(f.fileno()).st_size
+                bofbuffer, eofbuffer, _ = self.get_buffers(f, size, seekable=True)
             self.current_filesize = size
             if self.current_filesize == 0:
                 sys.stderr.write("FIDO: Zero byte file (empty): Path is: " + filename + "\n")
-            bofbuffer, eofbuffer, _ = self.get_buffers(f, size, seekable=True)
             matches = self.match_formats(bofbuffer, eofbuffer)
             container_type = self.container_type(matches)
             if not self.nocontainer and container_type in ("zip", "ole"):
-                container_file = ET.parse(os.path.join(os.path.abspath(self.conf_dir), self.containersignature_file))
+                container_file = Path(self.conf_dir).joinpath(self.containersignature_file)
                 if container_type == "zip":
                     container_matches = self.match_container("ZIP", ZipPackage, filename, container_file)
                 else:
@@ -476,15 +476,14 @@ class Fido:
             # we can only determine the filename from the STDIN stream
             # on Linux, on Windows there is not a (simple) way to do that
             if os.name != "nt":
-                try:
+                with suppress(OSError):
                     self.current_file = os.readlink("/proc/self/fd/0")
-                except OSError:
-                    if filename is not None:
-                        self.current_file = filename
-                    else:
-                        self.current_file = 'STDIN'
-            else:
-                if filename is not None:
+            if self.current_file == 'STDIN' and filename is not None:
+                self.current_file = filename
+
+            if self.current_file == 'STDIN' and filename is not None:
+                self.current_file = filename
+            elif filename is not None:
                     self.current_file = filename
             matches = self.match_extensions(self.current_file)
             # we have to reset self.current_file if not on Windows
@@ -758,15 +757,14 @@ class Fido:
 
 def list_files(roots, recurse=False):
     """Return the files one at a time. Roots could be a fileobj or a list."""
-    for root in roots:
-        root = (root if root[-1] != '\n' else root[:-1])
-        root = os.path.normpath(root)
-        if os.path.isfile(root):
-            yield root
+    for root_path in roots:
+        root = Path(root_path.strip())
+        if root.is_file():
+            yield str(root)
         else:
-            for path, _, files in os.walk(root):
-                for f in files:
-                    yield os.path.join(path, f)
+            for p in root.rglob("*") if recurse else root.glob("*"):
+                if p.is_file():
+                    yield str(p)
                 if not recurse:
                     break
 
@@ -776,6 +774,24 @@ def set_up_platform():
     if platform.system() == 'Windows' and PY2:
         import win_unicode_console  # noqa: E402
         win_unicode_console.enable(use_unicode_argv=True)
+
+
+def identify_file(file_path, **kwargs):
+    """
+    Library function to identify a single file.
+
+    :param file_path: Path to the file to identify.
+    :param kwargs: Other FIDO options.
+    :return: A list of matches.
+    """
+    matches_list = []
+
+    def handle_matches_capture(filename, matches, delta_t, matchtype=''):
+        matches_list.append({'file': filename, 'matches': matches, 'duration': delta_t, 'matchtype': matchtype})
+
+    fido = Fido(handle_matches=handle_matches_capture, **kwargs)
+    fido.identify_file(str(file_path))
+    return matches_list
 
 
 def main(args=None):
@@ -792,7 +808,7 @@ def main(args=None):
     parser.add_argument('-noextension', default=False, action='store_true', help='disable extension matching, reduces number of matches but may reduce false positives')
     parser.add_argument('-nocontainer', default=False, action='store_true', help='disable deep scan of container documents, increases speed but may reduce accuracy with big files')
     parser.add_argument('-pronom_only', default=False, action='store_true', help='disables loading of format extensions file, only PRONOM signatures are loaded, may reduce accuracy of results')
-
+ 
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-input', default=False, help='file containing a list of files to check, one per line. - means stdin')
     group.add_argument('files', nargs='*', default=[], metavar='FILE', help='files to check. If the file is -, then read content from stdin. In this case, python must be invoked with -u or it may convert the line terminators.')
@@ -820,7 +836,7 @@ def main(args=None):
     defaults['xml_pronomSignature'] = versions.pronom_signature
     defaults['containersignature_file'] = versions.pronom_container_signature
     defaults['xml_fidoExtensionSignature'] = versions.fido_extension_signature
-    defaults['format_files'] = [defaults['xml_pronomSignature']]
+    defaults['format_files'] = [Path(args.confdir) / defaults['xml_pronomSignature']]
 
     if args.pronom_only:
         versionHeader = "FIDO v{0} ({1}, {2})\n".format(__version__, defaults['xml_pronomSignature'], defaults['containersignature_file'])
@@ -828,7 +844,7 @@ def main(args=None):
         versionHeader = "FIDO v{0} ({1}, {2}, {3})\n".format(__version__, defaults['xml_pronomSignature'], defaults['containersignature_file'], defaults['xml_fidoExtensionSignature'])
         defaults['format_files'].append(defaults['xml_fidoExtensionSignature'])
 
-    if args.v:
+    if args.v or args.version:
         sys.stdout.write(versionHeader)
         sys.exit(0)
 
@@ -857,12 +873,14 @@ def main(args=None):
         printnomatch=args.nomatchprintf,
         zip=args.zip,
         nocontainer=args.nocontainer,
-        conf_dir=args.confdir)
+        conf_dir=args.confdir,
+        format_files=defaults['format_files'],
+        containersignature_file=defaults['containersignature_file'])
 
     # TODO: Allow conf options to be dis-included
     if args.loadformats:
         for file in args.loadformats.split(','):
-            fido.load_fido_xml(file)
+            fido.load_fido_xml(Path(file))
 
     # TODO: remove from maps
     if args.useformats:

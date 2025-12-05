@@ -14,14 +14,13 @@ PRONOM is available from http://www.nationalarchives.gov.uk/pronom/.
 """
 
 from __future__ import print_function
-
 from argparse import ArgumentParser
-import os
 from shutil import rmtree
 import sys
 import time
 from xml.etree import ElementTree as CET
 import zipfile
+from pathlib import Path
 
 from . import __version__, CONFIG_DIR, query_yes_no
 from .prepare import run as prepare_pronom_to_fido
@@ -40,7 +39,7 @@ DEFAULTS = {
 
 OPTIONS = {
     'http_throttle': 0.5,  # in secs, to prevent DoS of PRONOM server
-    'tmp_dir': os.path.join(CONFIG_DIR, 'tmp'),
+    'tmp_dir': Path(CONFIG_DIR) / 'tmp',
     'deleteTempDirectory': True,
     'version': 'latest',
 }
@@ -98,7 +97,7 @@ def sig_version_check(version='latest'):
 
 
 def _sig_file_name(version):
-    return os.path.join(CONFIG_DIR, DEFAULTS['signatureFileName'].format(version))
+    return Path(CONFIG_DIR) / DEFAULTS['signatureFileName'].format(version)
 
 
 def download_sig_file(version, sig_file):
@@ -107,7 +106,7 @@ def download_sig_file(version, sig_file):
     sig_xml, _ = get_droid_signatures(version)
     if not sig_xml:
         sys.exit('Failed to obtain PRONOM signature file, please try again.')
-    print("Writing {0}...".format(DEFAULTS['signatureFileName'].format(version)))
+    print("Writing {0}...".format(sig_file.name))
     with open(sig_file, 'w') as file_:
         file_.write(sig_xml)
 
@@ -124,7 +123,7 @@ def init_sig_download(defaults):
         sys.exit(ABORT_MSG)
     tmpdir = defaults['tmp_dir']
     resume = False
-    if os.path.isdir(tmpdir):
+    if tmpdir.is_dir():
         print("Found previously created temporary folder for download:", tmpdir)
         resume = query_yes_no('Do you want to resume download (yes) or start over (no)?')
         if resume:
@@ -132,10 +131,10 @@ def init_sig_download(defaults):
     else:
         print("Creating temporary folder for download:", tmpdir)
         try:
-            os.mkdir(tmpdir)
+            tmpdir.mkdir()
         except OSError:
             pass
-    if not os.path.isdir(tmpdir):
+    if not tmpdir.is_dir():
         sys.stderr.write("Failed to create temporary folder for PUID's, using: " + tmpdir)
     return tmpdir, resume
 
@@ -161,16 +160,16 @@ def download_sig(format_ele, tmpdir, resume, defaults):
     parameter format_ele. The downloaded signature is written to tmpdir.
     """
     puid, puid_filename = get_puid_file_name(format_ele)
-    filename = os.path.join(tmpdir, puid_filename)
-    if os.path.isfile(filename) and resume:
+    filename = tmpdir / puid_filename
+    if filename.is_file() and resume:
         return
     try:
         xml = get_sig_xml_for_puid(puid)
     except Exception as e:
         sys.stderr.write("Failed to download signature file:" + puid)
         sys.stderr.write("Error:" + str(e))
-        sys.exit('Please restart and resume download.')
-    with open(filename, 'wb') as file_:
+        return
+    with open(str(filename), 'wb') as file_:
         file_.write(xml)
     time.sleep(defaults['http_throttle'])
 
@@ -179,17 +178,16 @@ def create_zip_file(defaults, format_eles, version, tmpdir):
     """Create zip file of signatures."""
     print("Creating PRONOM zip...")
     compression = zipfile.ZIP_DEFLATED if 'zlib' in sys.modules else zipfile.ZIP_STORED
-    modes = {zipfile.ZIP_DEFLATED: 'deflated', zipfile.ZIP_STORED: 'stored'}
-    zf = zipfile.ZipFile(os.path.join(CONFIG_DIR, DEFAULTS['pronomZipFileName'].format(version)), mode='w')
-    print("Adding files with compression mode", modes[compression])
-    for format_ele in format_eles:
-        _, puid_filename = get_puid_file_name(format_ele)
-        filename = os.path.join(tmpdir, puid_filename)
-        if os.path.isfile(filename):
-            zf.write(filename, arcname=puid_filename, compress_type=compression)
-            if defaults['deleteTempDirectory']:
-                os.unlink(filename)
-    zf.close()
+    zip_path = Path(CONFIG_DIR) / DEFAULTS['pronomZipFileName'].format(version)
+    with zipfile.ZipFile(str(zip_path), mode='w', compression=compression) as zf:
+        print("Adding files with compression mode", zipfile.compression_names[compression])
+        for format_ele in format_eles:
+            _, puid_filename = get_puid_file_name(format_ele)
+            filename = tmpdir / puid_filename
+            if filename.is_file():
+                zf.write(str(filename), arcname=puid_filename)
+                if defaults['deleteTempDirectory']:
+                    filename.unlink()
 
 
 def get_puid_file_name(format_ele):

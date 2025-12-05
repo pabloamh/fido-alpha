@@ -19,12 +19,11 @@ PRONOM is available from http://www.nationalarchives.gov.uk/pronom/
 
 from __future__ import absolute_import
 
-import os
-import re
 import importlib_resources
 import sys
 import requests
 import six
+from pathlib import Path
 from xml.etree import ElementTree as ET
 from xml.etree.ElementTree import parse, ParseError
 
@@ -62,7 +61,7 @@ class LocalVersions(object):
     def __init__(self, versions_file):
         """Instantiate class based on the file indicated in `versions_file`."""
         self.versions_file = versions_file
-        self.conf_dir = os.path.abspath(os.path.dirname(versions_file))
+        self.conf_dir = Path(versions_file).parent.resolve()
         try:
             self.tree = parse(versions_file)
             self.root = self.tree.getroot()
@@ -88,11 +87,11 @@ class LocalVersions(object):
 
     def get_zip_file(self):
         """Obtain location to the PRONOM XML Zip file based on the current PRONOM version."""
-        return os.path.join(self.conf_dir, 'pronom-xml-v{}.zip'.format(self.pronom_version))
+        return self.conf_dir / 'pronom-xml-v{}.zip'.format(self.pronom_version)
 
     def get_signature_file(self):
         """Obtain location to the current PRONOM signature file."""
-        return os.path.join(self.conf_dir, self.pronom_signature)
+        return self.conf_dir / self.pronom_signature
 
     def write(self):
         """Update versions.xml."""
@@ -105,7 +104,7 @@ class LocalVersions(object):
 
 def get_local_versions(config_dir=CONFIG_DIR):
     """Return an instance of LocalVersions loaded with `conf/versions.xml`."""
-    return LocalVersions(os.path.join(config_dir, 'versions.xml'))
+    return LocalVersions(str(Path(config_dir) / 'versions.xml'))
 
 
 def sig_file_actions(sig_act):
@@ -154,17 +153,15 @@ def _check_update_signatures(sig_vers, update_url, versions, is_update=False):
 
 def _download_sig_version(sig_act, update_url, versions):
     sys.stdout.write('Downloading signature files for version {}\n'.format(sig_act))
-    match = re.search(r'^v?(\d+)$', sig_act, re.IGNORECASE)
-
-    if not match:
-        sys.exit('{} is not a valid version number, to download a sig file try "-sig v104" or "-sig 104".'.format(sig_act))
     ver = sig_act
     if not ver.startswith('v'):
         ver = 'v' + sig_act
+    if not (ver[1:].isdigit()):
+        sys.exit('{} is not a valid version number, to download a sig file try "-sig v104" or "-sig 104".'.format(sig_act))
     resp = requests.get(update_url + 'format/' + ver + '/')
     if resp.status_code != 200:
         sys.exit('No signature files found for {}, REST status {}'.format(sig_act, resp.status_code))
-    _output_details(re.search(r'\d+|$', ver).group(), update_url, versions)  # noqa: W605
+    _output_details(ver[1:], update_url, versions)
 
 
 def _get_version(ver_string):
@@ -197,7 +194,7 @@ def _version_check(sig_ver, update_url):
 
 def _write_sigs(latest, update_url, type, name_template):
     sig_out = str(importlib_resources.files('fido').joinpath('conf', name_template.format(latest)))
-    if os.path.exists(sig_out):
+    if Path(sig_out).exists():
         return
     resp = requests.get(update_url + 'format/{0}/{1}/'.format(latest, type))
     open(sig_out, 'wb').write(resp.content)

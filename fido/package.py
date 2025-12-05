@@ -1,5 +1,6 @@
 """Support for containers."""
 
+from pathlib import Path
 import re
 import zipfile
 
@@ -11,7 +12,7 @@ class Package():
     """Base class for container support."""
 
     def _process_puid_map(self, data, puid_map):
-        results = []
+        results = set()
         for puid, signatures in iteritems(puid_map):
             results.extend(self._process_matches(data, puid, signatures))
 
@@ -57,7 +58,7 @@ class OlePackage(Package):
 
                     with ole.openstream(filepath) as stream:
                         contents = stream.read()
-                        results.extend(self._process_puid_map(contents, puid_map))
+                        results.update(self._process_puid_map(contents, puid_map))
 
                 return results
         except IOError:
@@ -76,7 +77,7 @@ class ZipPackage(Package):
         """Detect available formats inside the ZIP container."""
         try:
             with zipfile.ZipFile(self.zip) as zip_:
-                results = []
+                results = set()
                 for path, puid_map in iteritems(self.signatures):
                     # Each ZIP container signature lists the path of the file inside the ZIP
                     # on which it operates; if the file is missing, there can be no match.
@@ -87,7 +88,7 @@ class ZipPackage(Package):
                     # data to each signature that requires it.
                     with zip_.open(path) as id_file:
                         contents = id_file.read()
-                        results.extend(self._process_puid_map(contents, puid_map))
+                        results.update(self._process_puid_map(contents, puid_map))
 
                 return results
         except (zipfile.BadZipfile, RuntimeError, UnicodeDecodeError):
