@@ -1,16 +1,20 @@
 Format Identification for Digital Objects (fido)
 ================================================
 
-By [Open Preservation Foundation](http://www.openpreservation.org)
+FIDO is a project of the [Open Preservation Foundation](http://www.openpreservation.org).
 
 [![Build Status](https://travis-ci.org/openpreserve/fido.svg?branch=master)](https://travis-ci.org/openpreserve/fido) [![Code Coverage](https://codecov.io/gh/openpreserve/fido/branch/master/graph/badge.svg)](https://codecov.io/gh/openpreserve/fido)
+
+FIDO is a Python library for identifying file formats. It's designed to be easily integrated into digital preservation workflows and other applications requiring reliable format identification. While it includes a command-line interface, its primary purpose is to serve as a robust and flexible library for developers.
+
+
 
 FIDO is a command-line tool to identify the file formats of digital objects.
 It is designed for simple integration into automated work-flows.
 
 FIDO uses the UK National Archives (TNA) PRONOM File Format and Container descriptions.
 PRONOM is available from <http://www.nationalarchives.gov.uk/pronom/>
-See [LICENSE](LICENSE.txt) for license information.
+See the [LICENSE](LICENSE.txt) for license information.
 
 * Download from: <https://github.com/openpreserve/fido/releases>
 * Usage guide: <http://wiki.opf-labs.org/display/KB/FIDO+usage+guide>
@@ -25,7 +29,7 @@ usage: fido [-h] [-v] [-q] [-recurse] [-zip] [-noextension] [-nocontainer]
             [-pronom_only] [-input INPUT] [-filename FILENAME]
             [-useformats INCLUDEPUIDS] [-nouseformats EXCLUDEPUIDS]
             [-matchprintf FORMATSTRING] [-nomatchprintf FORMATSTRING]
-            [-bufsize BUFSIZE] [-sigs SIG_ACT]
+            [-bufsize BUFSIZE] [-sigs SIG_ACT] 
             [-container_bufsize CONTAINER_BUFSIZE]
             [-loadformats XML1,...,XMLn] [-confdir CONFDIR]
             [FILE [FILE ...]]
@@ -33,11 +37,11 @@ usage: fido [-h] [-v] [-q] [-recurse] [-zip] [-noextension] [-nocontainer]
 
 positional arguments:
 
-* `FILE`: files to check. If the file is -, then read content from stdin. In this case, python must be invoked with `-u` or it may convert the line terminators.
+* `FILE`: files to check. If the file is -, then read content from stdin. In this case, python must be invoked with `-u` or it may convert the line terminators. 
 
 optional arguments:
 
-* `-h`, `--help`: show this help message and exit
+* `-h`, `--help`: show this help message and exit 
 * `-v`: show version information
 * `-q`: run (more) quietly
 * `-recurse`: recurse into subdirectories
@@ -46,10 +50,10 @@ optional arguments:
 * `-pronom_only`: disables loading of format extensions file, only PRONOM signatures are loaded, may reduce accuracy of results
 * `-input INPUT`: file containing a list of files to check, one per line. - means stdin
 * `-filename FILENAME`: filename if file contents passed through STDIN
-* `-useformats INCLUDEPUIDS`: comma separated string of formats to use in identification
+* `-useformats INCLUDEPUIDS`: comma separated string of formats to use in identification 
 * `-nouseformats EXCLUDEPUIDS`: comma separated string of formats not to use in identification
-* `-matchprintf FORMATSTRING`: format string (Python style) to use on match. See nomatchprintf, README.txt.
-* `-nomatchprintf FORMATSTRING`: format string (Python style) to use if no match. See README.txt
+* `-matchprintf FORMATSTRING`: format string (Python style) to use on match. 
+* `-nomatchprintf FORMATSTRING`: format string (Python style) to use if no match. 
 * `-bufsize BUFSIZE`: size (in bytes) of the buffer to match against (default=131072 bytes)
 * `-sigs SIG_ACT`: SIG_ACT "check" for new version of signature file for download.
                    SIG_ACT "list" list all available sig file versions.
@@ -59,6 +63,22 @@ optional arguments:
 * `-loadformats XML1,...,XMLn`: comma separated string of XML format files to add.
 * `-confdir CONFDIR`: configuration directory to load_fido_xml, for example, the format specifications from.
 
+Using FIDO as a Library
+-----------------------
+
+FIDO can be used as a library within your own Python applications. Here's a basic example:
+
+```python
+from fido import Fido
+
+fido = Fido()
+matches = fido.identify_file("path/to/your/file.pdf")
+
+for match in matches:
+    print(f"File format: {match[1]}")
+```
+
+
 Installation
 ------------
 
@@ -66,7 +86,7 @@ Installation
 
 Any platform
 
-1. Download the latest zip release from <https://github.com/openpreserve/fido/releases>
+1. Download the latest zip release from <https://github.com/openpreserve/fido/releases> 
 2. Unzip into some directory
 3. Open a command shell, cd to the directory that you placed the zip contents into
 4. Run `python setup.py install` to install FIDO and dependencies.  This may require sudo on Linux/OSX or admin privileges on Windows.
@@ -83,7 +103,7 @@ Updating signatures
 -------------------
 
 Signatures can be updated from the OPF's signature service.
-The service is pull only and iit's location is in the `versions.xml`
+The service is pull only and its location is in the `versions.xml`
 configuration file as
 
 ```xml
@@ -93,21 +113,21 @@ configuration file as
 To check what version of the PRONOM signatures you are using
 type: `fido -v` and you'll see something like:
 
-```shell
-FIDO v1.6.0 (pronom-xml-95.zip, container-signature-20200121.xml, format_extensions.xml)
+```
+FIDO v1.6.0 (formats-v116.xml, container-signature-20231127.xml, format_extensions.xml)
 ```
 
-Here `pronom-xml-95.zip` denotes PRONOM version 95. To see if a more recent
+Here `formats-v116.xml` denotes PRONOM signature version 116. To see if a more recent
 set of signatures is available type `fido -sigs check` which will report back:
 
 ```shell
-Updated signatures v104 are available, current version is v95
+Updated signatures v116 are available, current version is v115
 ```
 
 if new signatures are available or
 
 ```shell
-Your signature files are up to date, current version is v104
+INFO: Your signature files are up to date, current version is v116
 ```
 
 if not. To update signatures to the latest version type `fido -sigs update`:
@@ -126,16 +146,12 @@ for the PRONOM container signature file it will show up in a next commit.
 
 Dependencies
 ------------
+FIDO requires Python 3.6+ and the following Python packages:
+* `olefile`
+* `requests`
 
-FIDO 1.0 through 1.3.3 will run on Python 2.7 with no other dependencies.
+These dependencies are installed automatically when you install FIDO using `pip` or `setup.py`.
 
-FIDO 1.3.4 and later requires the python dependency 'olefile'.  This can be
-installed using `pip install olefile`, by running `python setup.py install`,
-or a pip installation will handle dependencies.
-
-FIDO 1.3.3 and later have experimental Python 3 support.
-
-FIDO 1.4 and later have Python 3 support.
 
 Format Definitions
 ------------------
