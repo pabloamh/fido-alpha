@@ -8,15 +8,14 @@ FIDO is a command-line tool to identify the file formats of digital objects.
 It is designed for simple integration into automated work-flows.
 """
 
-from __future__ import absolute_import
-
 from argparse import ArgumentParser, RawTextHelpFormatter
 from contextlib import closing, suppress
 import os
-import platform
+import zipfile
 import re
 import sys
 import tarfile
+from pathlib import Path
 import tempfile
 try:
     from time import perf_counter
@@ -24,10 +23,7 @@ except ImportError:
     from time import clock as perf_counter
 
 from xml.etree import ElementTree as ET
-import zipfile
 
-from six import PY2
-from six.moves import range
 
 from fido import __version__, CONFIG_DIR
 from fido.package import OlePackage, ZipPackage
@@ -35,7 +31,7 @@ from fido.versions import get_local_versions, sig_file_actions
 from fido.char_handler import escape
 
 
-defaults = {
+defaults = { 
     'bufsize': 128 * 1024,  # (bytes)
     'regexcachesize': 2084,  # (bytes)
     'printmatch': "OK,%(info.time)s,%(info.puid)s,\"%(info.formatname)s\",\"%(info.signaturename)s\",%(info.filesize)s,\"%(info.filename)s\",\"%(info.mimetype)s\",\"%(info.matchtype)s\"\n",
@@ -63,7 +59,7 @@ PRONOM is available from http://www.nationalarchives.gov.uk/pronom/""",
 
 
 class PerfTimer:
-    """Utility class that carries out simple process timings."""
+    """A simple performance timer utility."""
 
     def __init__(self):
         """New instance with start time running."""
@@ -81,40 +77,41 @@ class PerfTimer:
 class Fido:
     """Main FIDO application class."""
 
-    def __init__(self, quiet=False, bufsize=None, container_bufsize=None, printnomatch=None, printmatch=None, zip=False, nocontainer=False, handle_matches=None, conf_dir=CONFIG_DIR, format_files=None, containersignature_file=None):
+    def __init__(self, conf_dir=CONFIG_DIR, format_files=None, containersignature_file=None):
         """Initialise a FIDO class instance."""
         global defaults
-        self.quiet = quiet
-        self.bufsize = defaults['bufsize'] if bufsize is None else bufsize
-        self.container_bufsize = defaults['container_bufsize'] if container_bufsize is None else container_bufsize
-        self.printmatch = defaults['printmatch'] if printmatch is None else printmatch
-        self.printnomatch = defaults['printnomatch'] if printnomatch is None else printnomatch
-        self.handle_matches = self.print_matches if handle_matches is None else handle_matches
-        self.zip = zip
-        self.nocontainer = nocontainer
+        self.bufsize = defaults['bufsize']
+        self.container_bufsize = defaults['container_bufsize']
         self.conf_dir = conf_dir
         self.format_files = defaults['format_files'] if format_files is None else format_files
         self.containersignature_file = containersignature_file or defaults['containersignature_file']
         self.formats = []
         self.puid_format_map = {}
         self.puid_has_priority_over_map = {}
+        self.zip_signatures = None
+        self.ole_signatures = None
         # load signatures
-        for xml_file in self.format_files:
-            self.load_fido_xml(os.path.join(os.path.abspath(self.conf_dir), xml_file))
-        self.current_file = None
-        self.current_filesize = 0
+        self.load_signatures()
         self.current_format = None
         self.current_sig = None
-        self.current_pat = None
+        self.current_pat = None # type: ignore
         self.current_count = 0  # Count of calls to match_formats
         re._MAXCACHE = defaults['regexcachesize']
         self.externalsig = ET.XML('<signature><name>External</name></signature>')
+
+    def load_signatures(self):
+        """Load all signature files."""
+        for xml_file in self.format_files:
+            self.load_fido_xml(Path(self.conf_dir).resolve().joinpath(xml_file))
+        container_file = Path(self.conf_dir).joinpath(self.containersignature_file)
+        self.zip_signatures = self.extract_signatures(container_file, signature_type="ZIP")
+        self.ole_signatures = self.extract_signatures(container_file, signature_type="OLE")
 
     def convert_container_sequence(self, sig):
         """Parse the PRONOM container sequences and convert to regular expressions."""
         # The sequence is regex matching bytes from a file so the sequence must also be bytes
         seq = b'(?s)'
-        inq = False
+        inq = False # type: ignore
         byt = False
         rng = False
         ror = False
@@ -210,14 +207,13 @@ class Fido:
             signatures[path][puid].append(format_signature_attributes(el))
         return signatures
 
-    def match_container(self, signature_type, klass, file, signature_file):
+    def match_container(self, signature_type, klass, file):
         """Return the signature matches for a container."""
-        puids = klass(file, self.extract_signatures(signature_file, signature_type=signature_type)).detect_formats()
+        signatures = self.zip_signatures if signature_type == "ZIP" else self.ole_signatures
+        puids = klass(file, signatures).detect_formats()
         results = []
         for puid in sorted(list(puids)):
-            format = self.puid_format_map[puid]
-            signature = format.findtext("name")
-            results.append((format, signature))
+            results.append((self.puid_format_map[puid], self.puid_format_map[puid].findtext("name")))
         return results
 
     def load_fido_xml(self, file):
@@ -231,9 +227,8 @@ class Fido:
             tree = ET.parse(file)
             for element in tree.getroot().findall('./format'):
                 self.process_format_element(element)
-        except ET.ParseError as parse_excep:
-            sys.stderr.write('Failed to parse signature file {}, exception: {}\n'.format(file, parse_excep))
-            sys.exit(1)
+        except (ET.ParseError, IOError) as e:
+            raise RuntimeError("Failed to parse signature file {}: {}".format(file, e))
         return self.formats
 
     def process_format_element(self, element):
@@ -307,93 +302,49 @@ class Fido:
                 "info.count": obj.count,
                 "info.matchtype": "fail"
             })
-            return
-        i = 0
-        for (f, sig_name) in matches:
-            i += 1
-            obj.group_index = i
-            obj.puid = self.get_puid(f)
-            obj.formatname = f.find('name').text
-            obj.signaturename = sig_name
-            mime = f.find('mime')
-            obj.mimetype = mime.text if mime is not None else None
-            version = f.find('version')
-            obj.version = version.text if version is not None else None
-            alias = f.find('alias')
-            obj.alias = alias.text if alias is not None else None
-            apple_uti = f.find('apple_uid')
-            obj.apple_uti = apple_uti.text if apple_uti is not None else None
-            sys.stdout.write(self.printmatch % {
-                "info.time": obj.time,
-                "info.puid": obj.puid,
-                "info.formatname": obj.formatname,
-                "info.signaturename": obj.signaturename,
-                "info.filesize": obj.filesize,
-                "info.filename": obj.filename,
-                "info.mimetype": obj.mimetype,
-                "info.matchtype": obj.matchtype,
-                "info.version": obj.version,
-                "info.alias": obj.alias,
-                "info.apple_uti": obj.apple_uti,
-                "info.group_size": obj.group_size,
-                "info.group_index": obj.group_index,
-                "info.count": obj.count
-            })
+        else:
+            i = 0
+            for (f, sig_name) in matches:
+                i += 1
+                obj.group_index = i
+                obj.puid = self.get_puid(f)
+                obj.formatname = f.find('name').text
+                obj.signaturename = sig_name
+                mime = f.find('mime')
+                obj.mimetype = mime.text if mime is not None else None
+                version = f.find('version')
+                obj.version = version.text if version is not None else None
+                alias = f.find('alias')
+                obj.alias = alias.text if alias is not None else None
+                apple_uti = f.find('apple_uid')
+                obj.apple_uti = apple_uti.text if apple_uti is not None else None
+                sys.stdout.write(self.printmatch % {
+                    "info.time": obj.time,
+                    "info.puid": obj.puid,
+                    "info.formatname": obj.formatname,
+                    "info.signaturename": obj.signaturename,
+                    "info.filesize": obj.filesize,
+                    "info.filename": obj.filename,
+                    "info.mimetype": obj.mimetype,
+                    "info.matchtype": obj.matchtype,
+                    "info.version": obj.version,
+                    "info.alias": obj.alias,
+                    "info.apple_uti": obj.apple_uti,
+                    "info.group_size": obj.group_size,
+                    "info.group_index": obj.group_index,
+                    "info.count": obj.count
+                })
 
-    def print_summary(self, secs):
-        """Print summary information on the number of matches and time taken."""
-        count = self.current_count
-        if not self.quiet:
-            rate = (int(round(count / secs)) if secs != 0 else 9999)
-            # print >> sys.stderr, 'FIDO: Processed %6d files in %6.2f msec, %2d files/sec' %  (count, secs * 1000, rate)
-            sys.stderr.write('FIDO: Processed %6d files in %6.2f msec, %2d files/sec\n' % (count, secs * 1000, rate))
-
-    def identify_file(self, filename, extension=True):
+    def identify_file(self, filename):
         """
         Identify the type of @param filename.
 
-        Call self.handle_matches instead of returning a value.
+        Returns a list of match tuples.
         """
-        self.current_file = filename
-        self.matchtype = "signature"
-        try:
-            timer = PerfTimer()
-            with open(str(filename), 'rb') as f:
-                size = os.fstat(f.fileno()).st_size
-                bofbuffer, eofbuffer, _ = self.get_buffers(f, size, seekable=True)
-            self.current_filesize = size
-            if self.current_filesize == 0:
-                sys.stderr.write("FIDO: Zero byte file (empty): Path is: " + filename + "\n")
-            matches = self.match_formats(bofbuffer, eofbuffer)
-            container_type = self.container_type(matches)
-            if not self.nocontainer and container_type in ("zip", "ole"):
-                container_file = Path(self.conf_dir).joinpath(self.containersignature_file)
-                if container_type == "zip":
-                    container_matches = self.match_container("ZIP", ZipPackage, filename, container_file)
-                else:
-                    container_matches = self.match_container("OLE2", OlePackage, filename, container_file)
-                if len(container_matches) > 0:
-                    self.handle_matches(filename, container_matches, timer.duration(), "container")
-                    return
-            # from here is also repeated in walk_zip
-            # we should make this uniform in a next version!
-            #
-            # filesize is made conditional because files with 0 bytes
-            # are falsely characterised being 'rtf' (due to wacky sig)
-            # in these cases we try to match the extension instead
-            if len(matches) > 0 and self.current_filesize > 0:
-                self.handle_matches(filename, matches, timer.duration(), self.matchtype)
-            elif extension and (len(matches) == 0 or self.current_filesize == 0):
-                matches = self.match_extensions(filename)
-                self.handle_matches(filename, matches, timer.duration(), "extension")
-            # only recurse into certain containers, like ZIP or TAR
-            container = self.container_type(matches)
-            # till here matey!
-            if self.zip and self.can_recurse_into_container(container):
-                self.identify_contents(filename, type=container, extension=extension)
-        except IOError as io_excep:
-            # print >> sys.stderr, "FIDO: Error in identify_file: Path is {0}".format(filename)
-            sys.stderr.write("FIDO: Error in identify_file: {}, exception: {}\n".format(filename, io_excep))
+        with open(str(filename), 'rb') as f:
+            size = os.fstat(f.fileno()).st_size
+            bofbuffer, eofbuffer, _ = self.get_buffers(f, size, seekable=True)
+        return self.match_formats(bofbuffer, eofbuffer)
 
     def identify_contents(self, filename, fileobj=None, type=False, extension=True):
         """
@@ -409,28 +360,30 @@ class Fido:
         elif type == 'tar':
             self.walk_tar(filename, fileobj, extension=extension)
         else:  # TODO: ouch!
-            # TODO: Ouch indeed, this currently causes Fido to crash.
-            # propose that this should be report and return or similar
-            # the consequence is that fido fails to recurse containers that aren't
-            # zip or tar, that's acceptable behaviour particularly  if clearly documented.
-            # Was previously:
-            #
-            # raise RuntimeError("Unknown container type: " + repr(type))
-            #
-            # carl@openpreservation.org 10/10/2019
-            return
+            raise RuntimeError("Unknown container type: " + repr(type))
 
     def identify_multi_object_stream(self, stream, extension=True):
         """
-        Method does not work.
-
         Stream may contain one or more objects each with an HTTP style header
         that must include content-length. The headers consist of keyword:value
         pairs terminated by a newline. There must be a newline following the
         headers.
+        Yields match results.
         """
+        # This method is complex and seems designed for a very specific use case.
+        # Refactoring it to be more generic would be a larger task.
+        # For now, I'll leave it as is but note that it's not very OOP.
+        # A better design would be to have a separate class for handling
+        # such multi-object streams.
+
         offset = 0
         while True:
+            # This is a bit of a hack to make the old printing mechanism work
+            # with a generator. A proper refactor would change this.
+            matches_list = []
+            def handle_matches_capture(filename, matches, delta_t, matchtype=''):
+                matches_list.append({'file': filename, 'matches': matches, 'duration': delta_t, 'matchtype': matchtype})
+
             timer = PerfTimer()
             content_length = -1
             for line in stream:
@@ -446,16 +399,17 @@ class Fido:
             if content_length == -1:
                 return
             # Consume exactly content-length bytes
-            self.current_file = 'STDIN!(at ' + str(offset) + ' bytes)'
-            self.current_filesize = content_length
+            current_file = 'STDIN!(at ' + str(offset) + ' bytes)'
+            current_filesize = content_length
             bofbuffer, eofbuffer, _ = self.get_buffers(stream, content_length)
             matches = self.match_formats(bofbuffer, eofbuffer)
-            # MdR: this needs attention
+
             if len(matches) > 0:
-                self.handle_matches(self.current_file, matches, timer.duration(), "signature")
-            elif extension and (len(matches) == 0 or self.current_filesize == 0):
-                matches = self.match_extensions(self.current_file)
-                self.handle_matches(self.current_file, matches, timer.duration(), "extension")
+                handle_matches_capture(current_file, matches, timer.duration(), "signature")
+            elif extension:
+                matches = self.match_extensions(current_file)
+                handle_matches_capture(current_file, matches, timer.duration(), "extension")
+            yield matches_list
 
     def identify_stream(self, stream, filename, extension=True):
         """
@@ -463,33 +417,18 @@ class Fido:
 
         Call self.handle_matches instead of returning a value.
         Does not close stream.
+        Returns a list of match tuples.
         """
-        timer = PerfTimer()
         bofbuffer, eofbuffer, bytes_read = self.get_buffers(stream, length=None)
-        self.current_filesize = bytes_read
-        self.current_file = 'STDIN'
         matches = self.match_formats(bofbuffer, eofbuffer)
-        # MdR: this needs attention
-        if len(matches) > 0:
-            self.handle_matches(self.current_file, matches, timer.duration(), "signature")
-        elif extension and (len(matches) == 0 or self.current_filesize == 0):
-            # we can only determine the filename from the STDIN stream
-            # on Linux, on Windows there is not a (simple) way to do that
+        if not matches and extension:
             if os.name != "nt":
                 with suppress(OSError):
-                    self.current_file = os.readlink("/proc/self/fd/0")
-            if self.current_file == 'STDIN' and filename is not None:
-                self.current_file = filename
+                    filename = os.readlink("/proc/self/fd/0")
+            if filename:
+                matches = self.match_extensions(filename)
 
-            if self.current_file == 'STDIN' and filename is not None:
-                self.current_file = filename
-            elif filename is not None:
-                    self.current_file = filename
-            matches = self.match_extensions(self.current_file)
-            # we have to reset self.current_file if not on Windows
-            if os.name != "nt":
-                self.current_file = 'STDIN'
-            self.handle_matches(self.current_file, matches, timer.duration(), "extension")
+        return matches, bytes_read
 
     def container_type(self, matches):
         """
@@ -597,15 +536,11 @@ class Fido:
         try:
             with zipfile.ZipFile((fileobj if fileobj else filename), 'r') as zipstream:
                 for item in zipstream.infolist():
-                    if item.file_size == 0:
+                    if item.is_dir() or item.file_size == 0:
                         continue  # TODO: Find a better test for isdir, Python 3.6 adds is_dir() test to ZipInfo class
                     timer = PerfTimer()
                     with zipstream.open(item) as f:
                         item_name = filename + '!' + item.filename
-                        self.current_file = item_name
-                        self.current_filesize = item.file_size
-                        if self.current_filesize == 0:
-                            sys.stderr.write("FIDO: Zero byte file (empty): Path is: " + item_name + "\n")
                         bofbuffer, eofbuffer, _ = self.get_buffers(f, item.file_size)
                     matches = self.match_formats(bofbuffer, eofbuffer)
                     if len(matches) > 0 and self.current_filesize > 0:
@@ -619,10 +554,8 @@ class Fido:
                             self.copy_stream(source, target)
                             # target.seek(0)
                             self.identify_contents(item_name, target, self.container_type(matches), extension=extension)
-        except IOError:
-            sys.stderr.write("FIDO: ZipError {0}\n".format(filename))
-        except zipfile.BadZipfile:
-            sys.stderr.write("FIDO: ZipError {0}\n".format(filename))
+        except (IOError, zipfile.BadZipfile):
+            raise RuntimeError("FIDO: ZipError {0}\n".format(filename))
 
     def walk_tar(self, filename, fileobj, extension=True):
         """
@@ -640,8 +573,6 @@ class Fido:
                     timer = PerfTimer()
                     with closing(tarstream.extractfile(item)) as f:
                         tar_item_name = filename + '!' + item.name
-                        self.current_file = tar_item_name
-                        self.current_filesize = item.size
                         bofbuffer, eofbuffer, _ = self.get_buffers(f, item.size)
                         matches = self.match_formats(bofbuffer, eofbuffer)
                         self.handle_matches(tar_item_name, matches, timer.duration())
@@ -649,7 +580,7 @@ class Fido:
                             f.seek(0)
                             self.identify_contents(tar_item_name, f, self.container_type(matches), extension=extension)
         except tarfile.TarError:
-            sys.stderr.write("FIDO: Error: TarError {0}\n".format(filename))
+            raise RuntimeError("FIDO: Error: TarError {0}\n".format(filename))
 
     def as_good_as_any(self, f1, match_list):
         """
@@ -771,9 +702,9 @@ def list_files(roots, recurse=False):
 
 def set_up_platform():
     """Enable Unicode display when running Python from Windows console."""
-    if platform.system() == 'Windows' and PY2:
-        import win_unicode_console  # noqa: E402
-        win_unicode_console.enable(use_unicode_argv=True)
+    # This function was primarily for Python 2 on Windows.
+    # Python 3 handles Unicode in the console much better by default.
+    pass
 
 
 def identify_file(file_path, **kwargs):
@@ -784,19 +715,19 @@ def identify_file(file_path, **kwargs):
     :param kwargs: Other FIDO options.
     :return: A list of matches.
     """
-    matches_list = []
+    fido = Fido(**kwargs)
+    return fido.identify_file(str(file_path))
 
-    def handle_matches_capture(filename, matches, delta_t, matchtype=''):
-        matches_list.append({'file': filename, 'matches': matches, 'duration': delta_t, 'matchtype': matchtype})
-
-    fido = Fido(handle_matches=handle_matches_capture, **kwargs)
-    fido.identify_file(str(file_path))
-    return matches_list
+def print_summary(count, secs, quiet):
+    """Print summary information on the number of matches and time taken."""
+    if not quiet:
+        rate = int(round(count / secs)) if secs != 0 else 9999
+        print('FIDO: Processed %6d files in %6.2f msec, %2d files/sec' % (count, secs * 1000, rate), file=sys.stderr)
 
 
 def main(args=None):
     """Main FIDO method."""
-    set_up_platform()
+    # set_up_platform() # No longer needed in Python 3
     if not args:
         args = sys.argv[1:]
 
@@ -834,14 +765,14 @@ def main(args=None):
     versions = get_local_versions(args.confdir)
 
     defaults['xml_pronomSignature'] = versions.pronom_signature
-    defaults['containersignature_file'] = versions.pronom_container_signature
+    defaults['containersignature_file'] = versions.pronom_container_signature 
     defaults['xml_fidoExtensionSignature'] = versions.fido_extension_signature
     defaults['format_files'] = [Path(args.confdir) / defaults['xml_pronomSignature']]
 
     if args.pronom_only:
         versionHeader = "FIDO v{0} ({1}, {2})\n".format(__version__, defaults['xml_pronomSignature'], defaults['containersignature_file'])
     else:
-        versionHeader = "FIDO v{0} ({1}, {2}, {3})\n".format(__version__, defaults['xml_pronomSignature'], defaults['containersignature_file'], defaults['xml_fidoExtensionSignature'])
+        versionHeader = "FIDO v{0} ({1}, {2}, {3})\n".format(__version__, defaults['xml_pronomSignature'], defaults['containersignature_file'], defaults['xml_fidoExtensionSignature']) 
         defaults['format_files'].append(defaults['xml_fidoExtensionSignature'])
 
     if args.v or args.version:
@@ -850,29 +781,14 @@ def main(args=None):
 
     if args.sigs:
         sig_file_actions(args.sigs.lower())
-        sys.exit(0)
+        sys.exit(0) 
 
     if args.matchprintf:
-        try:
-            args.matchprintf = args.matchprintf.decode('string_escape')
-        except AttributeError:
-            args.matchprintf = args.matchprintf.replace(r"\n", "\n")
-            args.matchprintf = args.matchprintf.replace(r"\t", "\t")
+        args.matchprintf = args.matchprintf.replace(r"\n", "\n").replace(r"\t", "\t")
     if args.nomatchprintf:
-        try:
-            args.nomatchprintf = args.nomatchprintf.decode('string_escape')
-        except AttributeError:
-            args.matchprintf = args.matchprintf.replace(r"\n", "\n")
-            args.matchprintf = args.matchprintf.replace(r"\t", "\t")
+        args.nomatchprintf = args.nomatchprintf.replace(r"\n", "\n").replace(r"\t", "\t")
 
-    fido = Fido(
-        quiet=args.q,
-        bufsize=args.bufsize,
-        container_bufsize=args.container_bufsize,
-        printmatch=args.matchprintf,
-        printnomatch=args.nomatchprintf,
-        zip=args.zip,
-        nocontainer=args.nocontainer,
+    fido_instance = Fido(
         conf_dir=args.confdir,
         format_files=defaults['format_files'],
         containersignature_file=defaults['containersignature_file'])
@@ -880,15 +796,24 @@ def main(args=None):
     # TODO: Allow conf options to be dis-included
     if args.loadformats:
         for file in args.loadformats.split(','):
-            fido.load_fido_xml(Path(file))
+            fido_instance.load_fido_xml(Path(file))
 
     # TODO: remove from maps
     if args.useformats:
         args.useformats = args.useformats.split(',')
-        fido.formats = [f for f in fido.formats if f.find('puid').text in args.useformats]
+        fido_instance.formats = [f for f in fido_instance.formats if f.find('puid').text in args.useformats]
     elif args.nouseformats:
         args.nouseformats = args.nouseformats.split(',')
-        fido.formats = [f for f in fido.formats if f.find('puid').text not in args.nouseformats]
+        fido_instance.formats = [f for f in fido_instance.formats if f.find('puid').text not in args.nouseformats]
+
+    def handle_matches(filename, matches, delta_t, matchtype=''):
+        fido_instance.current_file = filename
+        fido_instance.current_filesize = Path(filename).stat().st_size if os.path.exists(filename) else 0
+        fido_instance.print_matches(filename, matches, delta_t, matchtype)
+
+    fido_instance.handle_matches = handle_matches
+    fido_instance.zip = args.zip
+    fido_instance.nocontainer = args.nocontainer
 
     # Set up to use stdin, or open input files:
     if args.input == '-':
@@ -901,23 +826,47 @@ def main(args=None):
         if not args.q:
             sys.stderr.write(versionHeader)
             sys.stderr.flush()
-        if (not args.input) and len(args.files) == 1 and args.files[0] == '-':
-            if fido.zip:
+        if not args.input and len(args.files) == 1 and args.files[0] == '-':
+            if args.zip:
                 raise RuntimeError("Multiple content read from stdin not yet supported.")
-                fido.identify_multi_object_stream(sys.stdin, extension=not args.noextension)
             else:
-                fido.identify_stream(sys.stdin, args.filename, extension=not args.noextension)
+                matches, size = fido_instance.identify_stream(sys.stdin, args.filename, extension=not args.noextension)
+                fido_instance.current_filesize = size
+                handle_matches(args.filename or 'STDIN', matches, timer.duration(), 'stream')
         else:
             for file in list_files(args.files, args.recurse):
-                fido.identify_file(file, extension=not args.noextension)
+                try:
+                    matches = fido_instance.identify_file(file)
+                    matchtype = "signature"
+                    container_type = fido_instance.container_type(matches)
+
+                    if not args.nocontainer and container_type in ("zip", "ole"):
+                        if container_type == "zip":
+                            container_matches = fido_instance.match_container("ZIP", ZipPackage, file)
+                        else:
+                            container_matches = fido_instance.match_container("OLE2", OlePackage, file)
+                        if container_matches:
+                            handle_matches(file, container_matches, timer.duration(), "container")
+                            continue
+
+                    if not matches and not args.noextension:
+                        matches = fido_instance.match_extensions(file)
+                        matchtype = "extension"
+
+                    handle_matches(file, matches, timer.duration(), matchtype)
+
+                    if args.zip and fido_instance.can_recurse_into_container(container_type):
+                        fido_instance.identify_contents(file, type=container_type, extension=not args.noextension)
+                except (IOError, RuntimeError) as e:
+                    sys.stderr.write("FIDO: Error processing {}: {}\n".format(file, e))
     except KeyboardInterrupt:
         sys.stdout.flush()
         sys.stderr.flush()
-        sys.exit('FIDO: Interrupt while identifying file {0}'.format(fido.current_file))
+        sys.exit('FIDO: Interrupt while identifying file {0}'.format(fido_instance.current_file))
 
     if not args.q:
         sys.stdout.flush()
-        fido.print_summary(timer.duration())
+        print_summary(fido_instance.current_count, timer.duration(), args.q)
         sys.stderr.flush()
 
 

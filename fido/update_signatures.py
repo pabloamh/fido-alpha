@@ -13,16 +13,16 @@ FIDO uses the UK National Archives (TNA) PRONOM File Format and Container descri
 PRONOM is available from http://www.nationalarchives.gov.uk/pronom/.
 """
 
-from __future__ import print_function
 from argparse import ArgumentParser
 from shutil import rmtree
+import logging
 import sys
 import time
 from xml.etree import ElementTree as CET
 import zipfile
 from pathlib import Path
 
-from . import __version__, CONFIG_DIR, query_yes_no
+from . import __version__, CONFIG_DIR, query_yes_no 
 from .prepare import run as prepare_pronom_to_fido
 from .versions import get_local_versions
 from .pronom.soap import get_pronom_sig_version, get_droid_signatures, NS
@@ -52,27 +52,26 @@ def run(defaults=None):
     Interactive script, requires keyboard input.
     """
     print("FIDO signature updater v{}".format(__version__))
-    defaults = defaults or DEFAULTS
+    options = {**OPTIONS, **(defaults or {})}
     try:
-        print("Contacting PRONOM...")
-        latest, sig_file = sig_version_check(defaults.get('version'))
+        logging.info("Contacting PRONOM...")
+        latest, sig_file = sig_version_check(options.get('version'))
         download_sig_file(latest, sig_file)
-        print("Extracting PRONOM PUID's from signature file...")
+        logging.info("Extracting PRONOM PUID's from signature file...")
         tree = CET.parse(sig_file)
         format_eles = tree.findall('.//sig:FileFormat', NS)
-        print("Found {} PRONOM FileFormat elements".format(len(format_eles)))
-        tmpdir, resume = init_sig_download(defaults)
-        download_signatures(defaults, format_eles, resume, tmpdir)
-        create_zip_file(defaults, format_eles, latest, tmpdir)
-        if defaults['deleteTempDirectory']:
-            print("Deleting temporary folder and files...")
+        logging.info("Found %s PRONOM FileFormat elements", len(format_eles))
+        tmpdir, resume = init_sig_download(options)
+        download_signatures(options, format_eles, resume, tmpdir)
+        create_zip_file(options, format_eles, latest, tmpdir)
+        if options['deleteTempDirectory']:
+            logging.info("Deleting temporary folder and files...")
             rmtree(tmpdir, ignore_errors=True)
         update_versions_xml(latest)
 
-        # TODO: there should be a check here to handle prepare.main exit() signal (-1/0/1/...)
-        print("Preparing to convert PRONOM formats to FIDO signatures...")
+        logging.info("Preparing to convert PRONOM formats to FIDO signatures...")
         prepare_pronom_to_fido()
-        print("FIDO signatures successfully updated")
+        logging.info("FIDO signatures successfully updated")
 
     except KeyboardInterrupt:
         sys.exit(ABORT_MSG)
@@ -80,17 +79,17 @@ def run(defaults=None):
 
 def sig_version_check(version='latest'):
     """Return a tuple consisting of current sig file version and the derived file name."""
-    print('Sig version check for version:', version)
+    logging.info('Sig version check for version: %s', version)
     if version == 'latest':
-        print('Getting latest version number from PRONOM...')
+        logging.info('Getting latest version number from PRONOM...')
         version = get_pronom_sig_version()
         if not version:
             sys.exit('Failed to obtain PRONOM signature file version number, please try again.')
 
-    print('Querying PRONOM for signaturefile version {}.'.format(version))
+    logging.info('Querying PRONOM for signaturefile version %s.', version)
     sig_file_name = _sig_file_name(version)
-    if os.path.isfile(sig_file_name):
-        print("You already have the PRONOM signature file, version", version)
+    if sig_file_name.is_file():
+        logging.warning("You already have the PRONOM signature file, version %s", version)
         if not query_yes_no("Update anyway?"):
             sys.exit(ABORT_MSG)
     return version, sig_file_name
@@ -102,11 +101,11 @@ def _sig_file_name(version):
 
 def download_sig_file(version, sig_file):
     """Download the latest version of the PRONOM sigs to signatureFile."""
-    print("Downloading signature file version {}...".format(version))
+    logging.info("Downloading signature file version %s...", version)
     sig_xml, _ = get_droid_signatures(version)
     if not sig_xml:
         sys.exit('Failed to obtain PRONOM signature file, please try again.')
-    print("Writing {0}...".format(sig_file.name))
+    logging.info("Writing %s...", sig_file.name)
     with open(sig_file, 'w') as file_:
         file_.write(sig_xml)
 
@@ -118,16 +117,16 @@ def init_sig_download(defaults):
     Handles user input and resumption of interupted downloads.
     Return a tuple of the temp directory for writing and a boolean resume flag.
     """
-    print("Downloading signatures can take a while")
+    logging.info("Downloading signatures can take a while")
     if not query_yes_no("Continue and download signatures?"):
         sys.exit(ABORT_MSG)
     tmpdir = defaults['tmp_dir']
     resume = False
     if tmpdir.is_dir():
-        print("Found previously created temporary folder for download:", tmpdir)
+        logging.info("Found previously created temporary folder for download: %s", tmpdir)
         resume = query_yes_no('Do you want to resume download (yes) or start over (no)?')
         if resume:
-            print("Resuming download...")
+            logging.info("Resuming download...")
     else:
         print("Creating temporary folder for download:", tmpdir)
         try:
@@ -141,15 +140,15 @@ def init_sig_download(defaults):
 
 def download_signatures(defaults, format_eles, resume, tmpdir):
     """Download PRONOM signatures and write to individual files."""
-    print("Downloading signatures, one moment please...")
+    logging.info("Downloading signatures, one moment please...")
     puid_count = len(format_eles)
     one_percent = (float(puid_count) / 100)
     numfiles = 0
     for format_ele in format_eles:
         download_sig(format_ele, tmpdir, resume, defaults)
         numfiles += 1
-        print(r"Downloaded {}/{} files [{}%]".format(numfiles, puid_count, int(float(numfiles) / one_percent)), end="\r")
-    print("100%")
+        sys.stdout.write(r"Downloaded {}/{} files [{}%]".format(numfiles, puid_count, int(float(numfiles) / one_percent)) + "\r")
+    sys.stdout.write("\n")
 
 
 def download_sig(format_ele, tmpdir, resume, defaults):
@@ -166,19 +165,19 @@ def download_sig(format_ele, tmpdir, resume, defaults):
     try:
         xml = get_sig_xml_for_puid(puid)
     except Exception as e:
-        sys.stderr.write("Failed to download signature file:" + puid)
-        sys.stderr.write("Error:" + str(e))
+        logging.error("Failed to download signature file: %s", puid)
+        logging.error("Error: %s", e)
         return
     with open(str(filename), 'wb') as file_:
         file_.write(xml)
     time.sleep(defaults['http_throttle'])
 
 
-def create_zip_file(defaults, format_eles, version, tmpdir):
+def create_zip_file(options, format_eles, version, tmpdir):
     """Create zip file of signatures."""
-    print("Creating PRONOM zip...")
+    logging.info("Creating PRONOM zip...")
     compression = zipfile.ZIP_DEFLATED if 'zlib' in sys.modules else zipfile.ZIP_STORED
-    zip_path = Path(CONFIG_DIR) / DEFAULTS['pronomZipFileName'].format(version)
+    zip_path = Path(CONFIG_DIR) / options['pronomZipFileName'].format(version)
     with zipfile.ZipFile(str(zip_path), mode='w', compression=compression) as zf:
         print("Adding files with compression mode", zipfile.compression_names[compression])
         for format_ele in format_eles:
@@ -186,7 +185,7 @@ def create_zip_file(defaults, format_eles, version, tmpdir):
             filename = tmpdir / puid_filename
             if filename.is_file():
                 zf.write(str(filename), arcname=puid_filename)
-                if defaults['deleteTempDirectory']:
+                if options['deleteTempDirectory']:
                     filename.unlink()
 
 
@@ -199,7 +198,7 @@ def get_puid_file_name(format_ele):
 
 def update_versions_xml(version):
     """Create new versions identified sig XML file."""
-    print('Updating versions.xml...')
+    logging.info('Updating versions.xml...')
     versions = get_local_versions()
     versions.pronom_version = str(version)
     versions.pronom_signature = "formats-v" + str(version) + ".xml"
@@ -211,6 +210,7 @@ def update_versions_xml(version):
 
 def main():
     """Main CLI entrypoint."""
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     parser = ArgumentParser(description='Download and convert the latest PRONOM signatures')
     parser.add_argument('-tmpdir', default=OPTIONS['tmp_dir'], help='Location to store temporary files', dest='tmp_dir')
     parser.add_argument('-keep_tmp', default=OPTIONS['deleteTempDirectory'], help='Do not delete temporary files after completion', dest='deleteTempDirectory', action='store_false')

@@ -7,15 +7,15 @@ from argparse import ArgumentParser
 from functools import cmp_to_key
 import hashlib
 import io
-import sys
 from xml.dom import minidom
 from xml.etree import ElementTree as ET
 import zipfile
-from urllib.request import urlopen
+import logging
+import requests
+import sys
 from urllib.parse import urlparse
-from urllib.error import HTTPError
 
-from .versions import get_local_versions
+from .versions import get_local_versions 
 from .char_handler import escape
 
 FLG_INCOMPATIBLE = '__INCOMPATIBLE_SIG__'
@@ -285,12 +285,12 @@ class FormatInfo:
                     # And calculate the checksum of this resource:
                     m = hashlib.md5()
                     try:
-                        sock = urlopen(url)
-                        m.update(sock.read())
-                        sock.close()
-                    except HTTPError as http_excep:
-                        sys.stderr.write('HTTP {} error loading resource {}\n'.format(http_excep.code, url))
-                        if http_excep.code == 404:
+                        response = requests.get(url)
+                        response.raise_for_status()
+                        m.update(response.content)
+                    except requests.exceptions.RequestException as http_excep:
+                        logging.error('HTTP error loading resource %s: %s', url, http_excep)
+                        if response.status_code == 404:
                             continue
 
                     checksum = m.hexdigest()

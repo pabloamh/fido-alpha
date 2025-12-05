@@ -3,18 +3,16 @@
 from pathlib import Path
 import re
 import zipfile
-
-import olefile
-from six import iteritems
+import olefile 
 
 
 class Package():
     """Base class for container support."""
 
     def _process_puid_map(self, data, puid_map):
-        results = set()
-        for puid, signatures in iteritems(puid_map):
-            results.extend(self._process_matches(data, puid, signatures))
+        results = set() 
+        for puid, signatures in puid_map.items():
+            results.update(self._process_matches(data, puid, signatures))
 
         return results
 
@@ -38,9 +36,9 @@ class OlePackage(Package):
     def detect_formats(self):
         """Detect available formats inside the OLE container."""
         try:
-            with olefile.OleFileIO(self.ole) as ole:
-                results = []
-                for path, puid_map in iteritems(self.signatures):
+            with olefile.OleFileIO(self.ole) as ole: # type: ignore
+                results = set()
+                for path, puid_map in self.signatures.items():
                     # Each OLE container signature lists the path of the file inside the OLE
                     # on which it operates; if the file is missing, there can be no match.
                     # This is not a precise match because the name of the stream may slightly
@@ -78,7 +76,7 @@ class ZipPackage(Package):
         try:
             with zipfile.ZipFile(self.zip) as zip_:
                 results = set()
-                for path, puid_map in iteritems(self.signatures):
+                for path, puid_map in self.signatures.items():
                     # Each ZIP container signature lists the path of the file inside the ZIP
                     # on which it operates; if the file is missing, there can be no match.
                     if path not in zip_.namelist():

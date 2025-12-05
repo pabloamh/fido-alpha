@@ -19,12 +19,11 @@ limitations under the License.
 
 PRONOM format signatures HTTP calls.
 """
-from six.moves import urllib
+import requests
 
 
 def get_sig_xml_for_puid(puid):
     """Return the full PRONOM signature XML for the passed PUID."""
-    req = urllib.request.Request("http://www.nationalarchives.gov.uk/pronom/{}.xml".format(puid))
-    response = urllib.request.urlopen(req)
-    xml = response.read()
-    return xml
+    response = requests.get(f"http://www.nationalarchives.gov.uk/pronom/{puid}.xml")
+    response.raise_for_status()
+    return response.content
