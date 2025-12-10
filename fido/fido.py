@@ -580,7 +580,7 @@ def main(args=None):
     if not args:
         args = sys.argv[1:]
 
-    parser = ArgumentParser(description=defaults['description'], epilog=defaults['epilog'], fromfile_prefix_chars='@', formatter_class=RawTextHelpFormatter)
+    parser = ArgumentParser(description=DEFAULTS['description'], epilog=DEFAULTS['epilog'], fromfile_prefix_chars='@', formatter_class=RawTextHelpFormatter)
     parser.add_argument('-v', default=False, action='store_true', help='show version information')
     parser.add_argument('-q', default=False, action='store_true', help='run (more) quietly')
     parser.add_argument('-recurse', default=False, action='store_true', help='recurse into subdirectories')
@@ -598,9 +598,9 @@ def main(args=None):
     parser.add_argument('-nouseformats', metavar='EXCLUDEPUIDS', default=None, help='comma separated string of formats not to use in identification')
     parser.add_argument('-matchprintf', metavar='FORMATSTRING', default=None, help='format string (Python style) to use on match. See nomatchprintf, README.txt.')
     parser.add_argument('-nomatchprintf', metavar='FORMATSTRING', default=None, help='format string (Python style) to use if no match. See README.txt')
-    parser.add_argument('-bufsize', type=int, default=None, help='size (in bytes) of the buffer to match against (default=' + str(defaults['bufsize']) + ' bytes)')
+    parser.add_argument('-bufsize', type=int, default=None, help='size (in bytes) of the buffer to match against (default=' + str(DEFAULTS['bufsize']) + ' bytes)')
     parser.add_argument('-sigs', default=None, metavar='SIG_ACT', help='SIG_ACT "check" for new version\nSIG_ACT "update" to latest\nSIG_ACT "list" available versions\nSIG_ACT "n" use version n.')
-    parser.add_argument('-container_bufsize', type=int, default=None, help='size (in bytes) of the buffer to match against (default=' + str(defaults['container_bufsize']) + ' bytes)')
+    parser.add_argument('-container_bufsize', type=int, default=None, help='size (in bytes) of the buffer to match against (default=' + str(DEFAULTS['container_bufsize']) + ' bytes)')
     parser.add_argument('-loadformats', default=None, metavar='XML1,...,XMLn', help='comma separated string of XML format files to add.')
     parser.add_argument('-confdir', default=CONFIG_DIR, help='configuration directory to load_fido_xml, for example, the format specifications from.')
 
@@ -655,7 +655,6 @@ def main(args=None):
         args.nouseformats = args.nouseformats.split(',')
         fido_instance.formats = [f for f in fido_instance.formats if f.puid not in args.nouseformats]
 
-    fido_instance.handle_matches = handle_matches
     fido_instance.zip = args.zip
     fido_instance.nocontainer = args.nocontainer
 
@@ -690,7 +689,7 @@ def main(args=None):
                         else:
                             container_matches = fido_instance.match_container("OLE2", OlePackage, file)
                         if container_matches:
-                            handle_matches(file, container_matches, timer.duration(), "container")
+                            fido_instance.print_matches(file, container_matches, timer.duration(), "container")
                             continue
 
                     if not matches and not args.noextension:

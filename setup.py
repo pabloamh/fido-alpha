@@ -1,19 +1,14 @@
-#!/usr/bin/env python
 """Setup installer for Fido."""
-# -*- coding: utf-8 -*-
 
-import codecs
-import os
 import re
+from pathlib import Path
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 def read(*parts):
     """Read the contents of files in parts and return contents."""
-    path = os.path.join(os.path.dirname(__file__), *parts)
-    with codecs.open(path, encoding='utf-8') as fobj:
-        return fobj.read()
+    return Path(Path(__file__).parent, *parts).read_text(encoding='utf-8')
 
 
 def find_version(*file_paths):
@@ -27,9 +22,7 @@ def find_version(*file_paths):
 
 install_requires = [
     'olefile >= 0.46, < 1',
-    'six >= 1.10.0, < 2',
-    'win-unicode-console >= 0.5; python_version == "2.7" and platform_system == "Windows"',
-    'importlib-resources',
+    'importlib-resources; python_version < "3.7"',
     'requests'
 ]
 
@@ -57,10 +50,11 @@ setup(
     url='http://openpreservation.org/technology/products/fido/',
     license='Apache License 2.0',
     install_requires=install_requires,
+    python_requires='>=3.6',
     setup_requires=setup_requires,
     tests_require=tests_require,
     extras_require=EXTRAS,
-    packages=['fido'],
+    packages=find_packages(),
     package_data={'fido': ['*.*', 'conf/*.*', 'signatures/*.*', 'pronom/*.*']},
     entry_points={'console_scripts': [
         'fido = fido.fido:main',
@@ -69,10 +63,13 @@ setup(
         'fido-toxml = fido.toxml:main',
     ]},
     classifiers=[
-        'Development Status :: 5 - Production/Stable',
+        'Development Status :: 4 - Beta',
         'Environment :: Console',
         'License :: OSI Approved :: Apache Software License',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
     ]
 )
