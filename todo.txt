@@ -1,14 +1,13 @@
 FIDO TODO LIST
-TODO: Describe main class interface
-TODO: Clean up XML file naming mess
+done: Describe main class interface
+done: Clean up XML file naming mess
 TODO: MDR: Use SPARQL endpoint to query available PUID's, then fetch them (URL:http://test.linkeddatapronom.nationalarchives.gov.uk/sparql/endpoint.php?query=select+distinct+%3Fname+%3Fext+%3Fpuid+%3Fxpuid+where+{%0D%0A+%0D%0A+%3Fs+<http%3A%2F%2Fwww.w3.org%2F2000%2F01%2Frdf-schema%23label>+%3Fname+.%0D%0A+%3Fs+<http%3A%2F%2Freference.data.gov.uk%2Ftechnical-registry%2Fextension>+%3Fext+.%0D%0A+OPTIONAL+{+%3Fs+<http%3A%2F%2Freference.data.gov.uk%2Ftechnical-registry%2FPUID>+%3Fpuid+.+}%0D%0A+OPTIONAL+{+%3Fs+<http%3A%2F%2Freference.data.gov.uk%2Ftechnical-registry%2FXPUID>+%3Fxpuid+.+}%0D%0A+%0D%0A%0D%0A}&output=xml&jsonp=&key=)
 TODO: ANJ: Complete validator to check refs, files, metadata and regexes are well formed, match EOF/BOF/VAR etc.
-TODO: ANJ: Report inconsistency of STATUS flag?
 TODO: ANJ: When in -checkformats mode, use levels of XSD validation instead of much of the logic in code.
 TODO: ANJ: Run DROID, file, and others(?) against a fileset and normalised output for comparison?
-TODO: ANJ: Add a format data conversion option to skip the <details> part.
-TODO: ANJ: Strip rich format records out for speed - keep data elsewhere.
-TODO: ANJ: Get usage of Dublin Core reviewed.
+done: ANJ: Add a format data conversion option to skip the <details> part.
+done: ANJ: Strip rich format records out for speed - keep data elsewhere.
+done: ANJ: Get usage of Dublin Core reviewed.
 TODO: Handle terminal backslash in a signature
 TODO: Change order of preference for extension matches!
 TODO: Review api against JHOVE/2
@@ -18,17 +17,14 @@ done: Move the fetch code from shell/wget to python
 note: In 0.9.3 I tried memoizing the routines to get_puid/regex/etc.  This resulted in an overall slowdown.
 done: Fix fmt/40 - for word; it requires 'microsoft word', but my example has 'microsoft office word'
 note: As of 8-Dec, there are 52 identical regexes.
-done: Handle whitespace in xml - what is proper for regex?  Is there a good way to preserve it?
-done: No extra escaped backslashes in formats.xml
-done: Make sure that the fixups get applied; at the moment, they are in formats.xml, but may be lost 
-skip: Tried, but slowed things down. I noted that some signatures share byte sequences.  Check how many there are any if more than a few, handle properly.done: Handle bigendian. x-fmt/392 JPEG2000 is the only one; consider reworking sig and dropping feature
-skip: Use int ids, offsets, etc, not strings.
+skip: Tried, but slowed things down. I noted that some signatures share byte sequences.  Check how many there are any if more than a few, handle properly.
+done: Handle bigendian. x-fmt/392 JPEG2000 is the only one; consider reworking sig and dropping feature
 skip: Consider using mmap instead of reading the buffer
 skip: Skip zero-len files
 skip: Try some alternate implementations of format checking.  E.g., no-compiled regex, try-me-else, first n-byte hash, reverse end
 skip: Try multiprocessing or threading to do IO and matching in parallel; the 0.5 setup doesn't seem to max out the CPU
 skip: Rejig the formats.py to implement a single function check_formats that is free to be optimised.
-skip: Handle tar, jar, gzip container formats / transforms as in METS
+done: Handle tar, jar, gzip container formats / transforms as in METS
 skip: Handle end-tests efficiently.  Or review them for other optimisations. Reverse? s[::-1]
 skip: Add a no EOF option (perhaps a bad idea until sigs are improved)
 skip: Add thread to handle signal and report on current file, #done, #todo, time

@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 FIDO: Format Identifier for Digital Objects.
 
@@ -20,7 +18,7 @@ limitations under the License.
 PRONOM format signatures SOAP calls.
 """
 import sys
-import urllib.request
+import requests
 import xml.etree.ElementTree as ET
 
 from fido import __version__
@@ -67,13 +65,14 @@ def get_droid_signatures(version):
     Upon error, write to `stderr` and return the tuple [], False.
     """
     xml = []
-    format_count = False
+    format_count = 0
     try:
-        with urllib.request.urlopen(f"https://www.nationalarchives.gov.uk/documents/DROID_SignatureFile_V{version}.xml") as f:
-            xml = f.read().decode('utf-8')
-            root_ele = ET.fromstring(xml)
-            format_count = len(root_ele.findall('.//{http://www.nationalarchives.gov.uk/pronom/SignatureFile}FileFormat'))
-    except urllib.error.HTTPError as httpe:
+        response = requests.get(f"https://www.nationalarchives.gov.uk/documents/DROID_SignatureFile_V{version}.xml")
+        response.raise_for_status()
+        xml = response.text
+        root_ele = ET.fromstring(xml)
+        format_count = len(root_ele.findall('.//{http://www.nationalarchives.gov.uk/pronom/SignatureFile}FileFormat'))
+    except requests.exceptions.RequestException as httpe:
         sys.stderr.write(f"get_droid_signatures(): could not download signature file v{version} due to exception: {httpe}\n")
     return xml, format_count
 
@@ -89,14 +88,14 @@ def _get_soap_ele_tree(soap_action):
 
 def _get_soap_response(soap_action, soap_string):
     try:
-        req = urllib.request.Request('http://{}/pronom/service.asmx'.format(PRONOM_HOST), data=soap_string)
-    except urllib.error.URLError:
-        print('There was a problem contacting the PRONOM service at http://{}/pronom/service.asmx.'.format(PRONOM_HOST))
-        print('Please check your network connection and try again.')
-        sys.exit(1)
-    for key, value in HEADERS.items():
-        req.add_header(key, value)
-    req.add_header('Content-length', '%d' % len(soap_string))
-    req.add_header('SOAPAction', soap_action)
-    response = urllib.request.urlopen(req)
-    return response.read().decode(ENCODING)
+        headers = HEADERS.copy()
+        headers['SOAPAction'] = soap_action
+        response = requests.post(
+            f'http://{PRONOM_HOST}/pronom/service.asmx',
+            data=soap_string,
+            headers=headers
+        )
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        raise IOError(f"There was a problem contacting the PRONOM service: {e}") from e

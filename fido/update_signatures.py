@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 """
 FIDO SIGNATURE UPDATER.
 
@@ -83,15 +80,15 @@ def sig_version_check(version='latest'):
     if version == 'latest':
         logging.info('Getting latest version number from PRONOM...')
         version = get_pronom_sig_version()
-        if not version:
-            sys.exit('Failed to obtain PRONOM signature file version number, please try again.')
+        if not isinstance(version, int):
+            raise RuntimeError('Failed to obtain PRONOM signature file version number, please try again.')
 
     logging.info('Querying PRONOM for signaturefile version %s.', version)
     sig_file_name = _sig_file_name(version)
     if sig_file_name.is_file():
         logging.warning("You already have the PRONOM signature file, version %s", version)
         if not query_yes_no("Update anyway?"):
-            sys.exit(ABORT_MSG)
+            raise InterruptedError(ABORT_MSG)
     return version, sig_file_name
 
 
@@ -104,7 +101,7 @@ def download_sig_file(version, sig_file):
     logging.info("Downloading signature file version %s...", version)
     sig_xml, _ = get_droid_signatures(version)
     if not sig_xml:
-        sys.exit('Failed to obtain PRONOM signature file, please try again.')
+        raise RuntimeError('Failed to obtain PRONOM signature file, please try again.')
     logging.info("Writing %s...", sig_file.name)
     with open(sig_file, 'w') as file_:
         file_.write(sig_xml)
@@ -119,7 +116,7 @@ def init_sig_download(defaults):
     """
     logging.info("Downloading signatures can take a while")
     if not query_yes_no("Continue and download signatures?"):
-        sys.exit(ABORT_MSG)
+        raise InterruptedError(ABORT_MSG)
     tmpdir = defaults['tmp_dir']
     resume = False
     if tmpdir.is_dir():

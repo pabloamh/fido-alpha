@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 """Character handling routines for Format Identification for Digital Objects (FIDO)."""
 
 # \a\b\n\r\t\v
@@ -13,14 +10,12 @@ HEX = '0123456789abcdef'
 
 def escape_char(c):
     """Add appropriate escape sequence to passed character c."""
-    if c in '\n':
-        return '\\n'
-    if c == '\r':
-        return '\\r'
+    escape_map = {'\n': '\\n', '\r': '\\r'}
+    if c in escape_map:
+        return escape_map[c]
     if c in SPECIAL:
         return '\\' + c
-    (high, low) = divmod(ord(c), 16)
-    return '\\x' + HEX[high] + HEX[low]
+    return f'\\x{ord(c):02x}'
 
 
 def escape(string):

@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 """
 FIDO CSV output to XML.
 
@@ -29,17 +26,17 @@ from .versions import get_local_versions
 def main():
     """Generate XML as read from CSV and send it to the standard output stream."""
     versions = get_local_versions()
-    sys.stdout.write(f"""<?xml version="1.0" encoding="utf-8"?>
+    sys.stdout.write(f'''<?xml version="1.0" encoding="utf-8"?>
 <fido_output>
     <versions>
         <fido_version>{__version__}</fido_version>
         <signature_version>{versions.pronom_version}</signature_version>
-    </versions>""")
+    </versions>''')
 
     reader = csv.reader(sys.stdin)
 
     for row in reader:
-        sys.stdout.write(f"""
+        sys.stdout.write(f'''
     <file>
         <filename>{row[6]}</filename>
         <status>{row[0]}</status>
@@ -50,7 +47,7 @@ def main():
         <formatname>{row[3]}</formatname>
         <signaturename>{row[4]}</signaturename>
         <filesize>{row[5]}</filesize>
-    </file>""")
+    </file>''')
 
     sys.stdout.write("\n</fido_output>\n")
 

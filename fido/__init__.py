@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 """
 Format Identification for Digital Objects (FIDO).
 
@@ -7,11 +5,7 @@ FIDO is a command-line tool to identify the file formats of digital objects.
 It is designed for simple integration into automated work-flows.
 """
 
-from __future__ import print_function
-
 from os.path import abspath, dirname, join
-
-from six.moves import input as rinput
 
 
 __version__ = '1.6.1'
@@ -40,8 +34,7 @@ def query_yes_no(question, default='yes'):
     else:
         raise ValueError('Invalid default answer: "%s"' % default)
     while True:
-        print(question + prompt, end='')
-        choice = rinput().lower()
+        choice = input(question + prompt).lower()
         if default is not None and choice == '':
             return valid[default]
         if choice in valid:
