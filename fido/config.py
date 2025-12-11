@@ -26,3 +26,9 @@ Author: Adam Farquhar (BL), 2010
 FIDO uses the UK National Archives (TNA) PRONOM File Format descriptions.
 PRONOM is available from http://www.nationalarchives.gov.uk/pronom/""",
 }
+
+PRONOM_DEFAULTS = {
+    'pronom_url': "http://www.nationalarchives.gov.uk/pronom/{puid}.xml",
+    'droid_sig_url': "https://www.nationalarchives.gov.uk/documents/DROID_SignatureFile_V{version}.xml",
+    'pronom_service_url': 'http://www.nationalarchives.gov.uk/pronom/service.asmx',
+}

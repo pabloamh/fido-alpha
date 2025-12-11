@@ -18,10 +18,21 @@ limitations under the License.
 PRONOM format signatures HTTP calls.
 """
 import requests
+import asyncio
+import aiohttp
+from ..config import PRONOM_DEFAULTS
 
 
-def get_sig_xml_for_puid(puid):
+def get_sig_xml_for_puid(puid: str) -> bytes:
     """Return the full PRONOM signature XML for the passed PUID."""
-    response = requests.get(f"http://www.nationalarchives.gov.uk/pronom/{puid}.xml")
+    response = requests.get(PRONOM_DEFAULTS['pronom_url'].format(puid=puid))
     response.raise_for_status()
     return response.content
+
+
+async def get_sig_xml_for_puid_async(session: aiohttp.ClientSession, puid: str) -> bytes:
+    """Asynchronously return the full PRONOM signature XML for the passed PUID."""
+    url = PRONOM_DEFAULTS['pronom_url'].format(puid=puid)
+    async with session.get(url) as response:
+        response.raise_for_status()
+        return await response.read()

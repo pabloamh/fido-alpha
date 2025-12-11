@@ -23,7 +23,8 @@ def find_version(*file_paths):
 install_requires = [
     'olefile >= 0.46, < 1',
     'importlib-resources; python_version < "3.7"',
-    'requests'
+    'requests',
+    'aiohttp'
 ]
 
 

@@ -2,14 +2,15 @@
 FIDO SIGNATURE UPDATER.
 
 Open Planets Foundation (http://www.openplanetsfoundation.org)
-See License.txt for license information.
+See License.txt for license information. 
 Download from: https://github.com/openplanets/fido/releases
 Author: Maurice de Rooij (NANETH), 2012
 
 FIDO uses the UK National Archives (TNA) PRONOM File Format and Container descriptions.
 PRONOM is available from http://www.nationalarchives.gov.uk/pronom/.
 """
-
+import asyncio
+import aiohttp
 from argparse import ArgumentParser
 from shutil import rmtree
 import logging
@@ -21,7 +22,7 @@ from pathlib import Path
 
 from . import __version__, CONFIG_DIR, FidoError
 from .prepare import run as prepare_pronom_to_fido
-from .versions import get_local_versions
+from .versions import get_local_versions, LocalVersions
 from .pronom.soap import get_pronom_sig_version, get_droid_signatures, NS
 from .pronom.http import get_sig_xml_for_puid
 from .cli import query_yes_no
@@ -45,7 +46,7 @@ OPTIONS = {
 }
 
 
-def run(defaults=None):
+def run(defaults=None) -> None:
     """
     Update PRONOM signatures.
 
@@ -61,7 +62,7 @@ def run(defaults=None):
         tree = CET.parse(sig_file)
         format_eles = tree.findall('.//sig:FileFormat', NS)
         logging.info("Found %s PRONOM FileFormat elements", len(format_eles))
-        tmpdir, resume = init_sig_download(options)
+        tmpdir, resume = init_sig_download(options) # type: ignore
         download_signatures(options, format_eles, resume, tmpdir)
         create_zip_file(options, format_eles, latest, tmpdir)
         if options['deleteTempDirectory']:
@@ -77,7 +78,7 @@ def run(defaults=None):
         sys.exit(ABORT_MSG)
 
 
-def sig_version_check(version='latest'):
+def sig_version_check(version: str = 'latest') -> Tuple[int, Path]:
     """Return a tuple consisting of current sig file version and the derived file name."""
     logging.info('Sig version check for version: %s', version)
     if version == 'latest':
@@ -95,11 +96,11 @@ def sig_version_check(version='latest'):
     return version, sig_file_name
 
 
-def _sig_file_name(version):
+def _sig_file_name(version: int) -> Path:
     return Path(CONFIG_DIR) / DEFAULTS['signatureFileName'].format(version)
 
 
-def download_sig_file(version, sig_file):
+def download_sig_file(version: int, sig_file: Path) -> None:
     """Download the latest version of the PRONOM sigs to signatureFile."""
     logging.info("Downloading signature file version %s...", version)
     sig_xml, _ = get_droid_signatures(version)
@@ -110,7 +111,7 @@ def download_sig_file(version, sig_file):
         file_.write(sig_xml)
 
 
-def init_sig_download(defaults):
+def init_sig_download(defaults: Dict) -> Tuple[Path, bool]:
     """
     Initialise the download of individual PRONOM signatures.
 
@@ -138,42 +139,45 @@ def init_sig_download(defaults):
     return tmpdir, resume
 
 
-def download_signatures(defaults, format_eles, resume, tmpdir):
-    """Download PRONOM signatures and write to individual files."""
-    logging.info("Downloading signatures, one moment please...")
-    puid_count = len(format_eles)
-    one_percent = (float(puid_count) / 100)
-    numfiles = 0
-    for format_ele in format_eles:
-        download_sig(format_ele, tmpdir, resume, defaults)
-        numfiles += 1
-        sys.stdout.write(r"Downloaded {}/{} files [{}%]".format(numfiles, puid_count, int(float(numfiles) / one_percent)) + "\r")
-    sys.stdout.write("\n")
-
-
-def download_sig(format_ele, tmpdir, resume, defaults):
+async def download_sig(session: aiohttp.ClientSession, format_ele: CET.Element, tmpdir: Path, resume: bool, defaults: Dict) -> None:
     """
-    Download an individual PRONOM signature.
-
-    The signature to be downloaded is identified by the FileFormat element
-    parameter format_ele. The downloaded signature is written to tmpdir.
+    Asynchronously download an individual PRONOM signature.
     """
     puid, puid_filename = get_puid_file_name(format_ele)
     filename = tmpdir / puid_filename
     if filename.is_file() and resume:
         return
+
     try:
-        xml = get_sig_xml_for_puid(puid)
+        xml = await get_sig_xml_for_puid_async(session, puid)
+        with open(str(filename), 'wb') as file_:
+            file_.write(xml)
+        time.sleep(defaults['http_throttle'])
     except Exception as e:
-        logging.error("Failed to download signature file: %s", puid)
-        logging.error("Error: %s", e)
-        return
-    with open(str(filename), 'wb') as file_:
-        file_.write(xml)
-    time.sleep(defaults['http_throttle'])
+        logging.error("Failed to download signature file: %s. Error: %s", puid, e)
 
 
-def create_zip_file(options, format_eles, version, tmpdir):
+async def download_signatures_async(defaults: Dict, format_eles: List[CET.Element], resume: bool, tmpdir: Path) -> None:
+    """Download PRONOM signatures and write to individual files."""
+    logging.info("Downloading signatures, one moment please...")
+    async with aiohttp.ClientSession() as session:
+        tasks = [download_sig(session, format_ele, tmpdir, resume, defaults) for format_ele in format_eles]
+        
+        puid_count = len(tasks)
+        for i, f in enumerate(asyncio.as_completed(tasks)):
+            await f
+            progress = (i + 1) / puid_count
+            sys.stdout.write(f"\rDownloaded {i+1}/{puid_count} files [{int(progress * 100)}%]")
+            sys.stdout.flush()
+    print("\nDownload complete.")
+
+
+def download_signatures(defaults: Dict, format_eles: List[CET.Element], resume: bool, tmpdir: Path) -> None:
+    """Wrapper to run the asynchronous download."""
+    asyncio.run(download_signatures_async(defaults, format_eles, resume, tmpdir))
+
+
+def create_zip_file(options: Dict, format_eles: List[CET.Element], version: int, tmpdir: Path) -> None:
     """Create zip file of signatures."""
     logging.info("Creating PRONOM zip...")
     compression = zipfile.ZIP_DEFLATED if 'zlib' in sys.modules else zipfile.ZIP_STORED
@@ -189,14 +193,14 @@ def create_zip_file(options, format_eles, version, tmpdir):
                     filename.unlink()
 
 
-def get_puid_file_name(format_ele):
+def get_puid_file_name(format_ele: CET.Element) -> Tuple[str, str]:
     """Return a tupe of PUID and PUID file name derived from format_ele."""
     puid = format_ele.get('PUID')
     type_part, num_part = puid.split("/")
     return puid, 'puid.{}.{}.xml'.format(type_part, num_part)
 
 
-def update_versions_xml(version):
+def update_versions_xml(version: int) -> None:
     """Create new versions identified sig XML file."""
     logging.info('Updating versions.xml...')
     versions = get_local_versions()
@@ -208,7 +212,7 @@ def update_versions_xml(version):
     versions.write()
 
 
-def main():
+def main() -> None:
     """Main CLI entrypoint."""
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     parser = ArgumentParser(description='Download and convert the latest PRONOM signatures', fromfile_prefix_chars='@')

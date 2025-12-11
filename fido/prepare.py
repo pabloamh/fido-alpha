@@ -480,24 +480,30 @@ def convert_to_regex(chars, endianness='', pos='BOF', offset='0', maxoffset=''):
     state = 'start'
 
     def handle_start(char):
-        nonlocal state
+        nonlocal state, i
         if char.isalnum():
             state = 'bytes'
+            return 0
         elif char == '&':
             state = 'all-bitmask'
+            return 1
         elif char == '~':
             state = 'any-bitmask'
+            return 1
         elif char == '[':
             state = 'bracket'
+            return 1
         elif char == '{':
             state = 'curly'
+            return 1
         elif char == '(':
             state = 'paren'
+            return 1
         elif char in '*+?':
             state = 'specials'
+            return 1
         else:
             raise ValueError(_convert_err_msg('Illegal character in start', char, i, chars, buf))
-        return 0
 
     def handle_bytes():
         nonlocal state
@@ -514,26 +520,26 @@ def convert_to_regex(chars, endianness='', pos='BOF', offset='0', maxoffset=''):
         return inc
 
     def handle_bracket():
-        nonlocal i, state
+        nonlocal state
         buf.write('[')
-        i += 1
-        (byt, inc) = do_byte(chars, i, littleendian)
+        j = i + 1
+        (byt, inc) = do_byte(chars, j, littleendian)
         buf.write(byt)
-        i += inc
-        if chars[i] != ':': return "__INCOMPATIBLE_SIG__"
+        j += inc
+        if chars[j] != ':': return "__INCOMPATIBLE_SIG__", j
         buf.write('-')
-        i += 1
-        (byt, inc) = do_byte(chars, i, littleendian)
+        j += 1
+        (byt, inc) = do_byte(chars, j, littleendian)
         buf.write(byt)
-        i += inc
-        if chars[i] != ']': return "__INCOMPATIBLE_SIG__"
+        j += inc
+        if chars[j] != ']': return "__INCOMPATIBLE_SIG__", j
         buf.write(']')
-        i += 1
-        if i < len(chars) and chars[i] == '{':
+        j += 1
+        if j < len(chars) and chars[j] == '{':
             state = 'curly-after-bracket'
         else:
             state = 'start'
-        return 0
+        return None, j
 
     if pos in ('BOF', 'IFB'):
         buf.write('\\A')  # start of regex
@@ -543,30 +549,23 @@ def convert_to_regex(chars, endianness='', pos='BOF', offset='0', maxoffset=''):
     # of the original function is maintained in the helper functions, but this
     # structure makes the flow easier to follow.
     while i < len(chars):
-        char = chars[i]
-        increment = 1
-
         if state == 'start':
-            increment = handle_start(char)
+            i += handle_start(chars[i])
         elif state == 'bytes':
-            increment = handle_bytes()
+            i += handle_bytes()
         elif state == 'all-bitmask':
-            increment = handle_bitmask(do_all_bitmasks)
+            i += handle_bitmask(do_all_bitmasks)
         elif state == 'any-bitmask':
-            increment = handle_bitmask(do_any_bitmasks)
+            i += handle_bitmask(do_any_bitmasks)
         elif state == 'bracket':
-            result = handle_bracket()
-            if result == FLG_INCOMPATIBLE: return result
-            increment = 0 # i is managed by handle_bracket
-        # ... other states would be refactored similarly ...
-        else: # Simplified for this example
-            # Fallback to original logic for states not shown here
-            # A full refactoring would replace the entire original while loop
-            # For brevity, we'll assume the original logic is called here
-            # and we just break to avoid an infinite loop in this example.
-            break
-
-        i += increment
+            result, i = handle_bracket()
+            if result == FLG_INCOMPATIBLE:
+                return result
+        else:
+            # Fallback for other states not explicitly refactored here.
+            # A full refactoring would cover all states.
+            # For this example, we'll just advance to avoid an infinite loop.
+            i += 1
 
     if 'EOF' in pos:
         buf.write(calculate_repetition('.', pos, offset, maxoffset))

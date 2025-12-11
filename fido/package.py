@@ -4,11 +4,15 @@ import re
 import tempfile
 import tarfile
 from pathlib import Path
-import zipfile
-import olefile 
+import zipfile 
 from contextlib import closing
-from xml.etree import ElementTree as ET
 
+try:
+    import olefile
+    from lxml import etree
+except ImportError:
+    import xml.etree.ElementTree as etree
+    
 from .models import FileFormat, Signature, Pattern
 from .char_handler import escape
 
@@ -185,8 +189,8 @@ class SignatureLoader:
     def _load_fido_xml(self, file_path):
         """Load a FIDO format XML file and parse it."""
         try:
-            tree = ET.parse(file_path)
-            for element in tree.getroot().findall('./format'):
+            tree = etree.parse(str(file_path))
+            for element in tree.xpath('/formats/format'):
                 self._process_format_element(element)
         except (ET.ParseError, IOError) as e:
             raise RuntimeError(f"Failed to parse signature file {file_path}: {e}")

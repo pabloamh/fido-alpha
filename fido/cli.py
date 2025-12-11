@@ -9,40 +9,14 @@ import sys
 from pathlib import Path
 import logging
 
-from .fido import Fido, PerfTimer
+from .fido import Fido
 from . import __version__
 from .config import DEFAULTS
 from .package import ZipPackage, OlePackage, SignatureLoader
 from .versions import get_local_versions
 from .update_signatures import run as update_signatures
-
-
-def query_yes_no(question, default='yes'):
-    """
-    Ask a yes/no question via input() and return their answer.
-
-    `question` is a string that is presented to the user. `default` is the
-    presumed answer if the user just hits <Enter>. It must be "yes" (the
-    default), "no" or None (meaning an answer is required of the user).
-
-    The "answer" return value is True for "yes" or False for "no".
-    """
-    valid = {'yes': True, 'y': True, 'no': False, 'n': False}
-    if default is None:
-        prompt = ' [y/n] '
-    elif default == 'yes':
-        prompt = ' [Y/n] '
-    elif default == 'no':
-        prompt = ' [y/N] '
-    else:
-        raise ValueError('Invalid default answer: "%s"' % default)
-    while True:
-        choice = input(question + prompt).lower()
-        if default is not None and choice == '':
-            return valid[default]
-        if choice in valid:
-            return valid[choice]
-        print('Please respond with "yes" or "no" (or "y" or "n").')
+from .reporters import print_matches, print_summary
+from .utils import PerfTimer
 
 
 def list_files(roots, recurse=False):
@@ -57,49 +31,6 @@ def list_files(roots, recurse=False):
                     yield str(p)
                 if not recurse:
                     break
-
-
-def print_summary(count, secs, quiet):
-    """Print summary information on the number of matches and time taken."""
-    if not quiet:
-        rate = int(round(count / secs)) if secs != 0 else 9999
-        print('FIDO: Processed %6d files in %6.2f msec, %2d files/sec' % (count, secs * 1000, rate), file=sys.stderr)
-
-
-def print_matches(fido_instance, fullname, matches, delta_t, matchtype=''):
-    """
-    The default match handler. Prints out information for each match in the list.
-
-    @param fullname is name of the file being matched
-    @param matches is a list of (format, signature)
-    @param delta_t is the time taken for the match.
-    @param matchtype is the type of match (signature, containersignature, extension, fail)
-    """
-    class Info:
-        pass
-    obj = Info()
-    obj.count = fido_instance.current_count
-    obj.group_size = len(matches)
-    obj.filename = fullname
-    obj.time = int(delta_t * 1000)
-    obj.filesize = fido_instance.current_filesize
-    obj.matchtype = matchtype
-    if len(matches) == 0:
-        sys.stdout.write(DEFAULTS['printnomatch'].format(info=obj))
-    else:
-        i = 0
-        for (f, sig_name) in matches:
-            i += 1
-            obj.group_index = i
-            obj.puid = f.puid
-            obj.formatname = f.name
-            obj.signaturename = sig_name
-            obj.mimetype = f.mime
-            obj.version = f.version
-            # These attributes are not in the new model, so we set them to None
-            obj.alias = None
-            obj.apple_uti = None
-            sys.stdout.write(DEFAULTS['printmatch'].format(info=obj))
 
 
 def main(args=None):
@@ -206,24 +137,9 @@ def main(args=None):
         else:
             for file in list_files(args.files, args.recurse):
                 try:
-                    matches = fido_instance.identify_file(file)
-                    matchtype = "signature"
-                    container_type = fido_instance.container_type(matches)
-
-                    if not args.nocontainer and container_type in ("zip", "ole"):
-                        if container_type == "zip":
-                            container_matches = fido_instance.match_container("ZIP", ZipPackage, file)
-                        else:
-                            container_matches = fido_instance.match_container("OLE2", OlePackage, file)
-                        if container_matches:
-                            print_matches(fido_instance, file, container_matches, timer.duration(), "container")
-                            continue
-
-                    if not matches and not args.noextension:
-                        matches = fido_instance.match_extensions(file)
-                        matchtype = "extension"
-
-                    print_matches(fido_instance, file, matches, timer.duration(), matchtype)
+                    matches = fido_instance.identify_file(file, extension=not args.noextension)
+                    for match in matches:
+                        print_matches(fido_instance, match['filename'], [match], timer.duration(), match['match_type'])
 
                 except (IOError, RuntimeError) as e:
                     sys.stderr.write("FIDO: Error processing {}: {}\n".format(file, e))

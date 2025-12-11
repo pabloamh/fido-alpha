@@ -16,3 +16,5 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 """FIDO module to deal with all things PRONOM signature files."""
+from . import http, soap
+__all__ = ['http', 'soap']

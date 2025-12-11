@@ -1,10 +1,6 @@
 # Format Identification for Digital Objects (FIDO)
 
-FIDO is a project of the [Open Preservation Foundation](http://www.openpreservation.org).
-
-[![Build Status](https://travis-ci.org/openpreserve/fido.svg?branch=master)](https://travis-ci.org/openpreserve/fido) [![Code Coverage](https://codecov.io/gh/openpreserve/fido/branch/master/graph/badge.svg)](https://codecov.io/gh/openpreserve/fido)
-
-FIDO is a Python library and command-line tool for identifying the file formats of digital objects. It is designed for simple integration into digital preservation workflows and other applications requiring reliable format identification.
+FIDO is a Python library and command-line tool for identifying the file formats of digital objects. It is designed for simple integration into automated workflows and other applications requiring reliable format identification.
 
 This document provides an overview of FIDO's structure, installation, and usage, both as a standalone application and as a library integrated into other Python projects.
 
@@ -15,7 +11,7 @@ The FIDO project has been refactored to follow modern, object-oriented design pr
 The key components of the project are:
 
 *   **`fido/fido.py`**: The main application class and command-line entry point. It orchestrates the format identification process.
-*   **`fido/models.py`**: Contains the data classes (`FileFormat`, `Signature`, `Pattern`) that represent the core data structures.
+*   **`fido/models.py`**: Contains the data classes (`FileFormat`, `Signature`, `Pattern`) that represent the core data structures used for format identification.
 *   **`fido/package.py`**: Handles the loading and parsing of format signatures, as well as the logic for identifying files within containers like ZIP and TAR archives.
 *   **`fido/config.py`**: Centralized configuration for default settings, such as buffer sizes and output formats.
 *   **`fido/pronom/`**: A package for interacting with the PRONOM technical registry, including downloading new signature files.
@@ -24,14 +20,13 @@ This structure separates concerns, making the codebase cleaner and more approach
 
 ## Installation
 
-FIDO can be installed on any platform with Python 3.6+ and `pip`.
+FIDO can be installed on any platform with Python 3.6+ and `pip`. It is recommended to install it within a virtual environment.
 
-### Using pip
-
-The recommended way to install FIDO is via `pip`:
+1.  Navigate to the root directory of the project in your command shell.
+2.  Run the following command to install FIDO and its dependencies in editable mode:
 
 ```shell
-pip install opf-fido
+pip install -e .
 ```
 
 This will install FIDO and its dependencies. On Linux/macOS, you may need to use `sudo`:
@@ -117,12 +112,12 @@ matches = fido_instance.identify_file(file_to_identify)
 # Process the results
 if matches:
     print(f"Found {len(matches)} match(es) for {file_to_identify}:")
-    for file_format, signature_name in matches:
-        print(f"  - PUID: {file_format.puid}")
-        print(f"    Name: {file_format.name}")
-        print(f"    Version: {file_format.version or 'N/A'}")
-        print(f"    MIME Type: {file_format.mime or 'N/A'}")
-        print(f"    Matching Signature: {signature_name}")
+    for match in matches:
+        print(f"  - PUID: {match['puid']}")
+        print(f"    Name: {match['name']}")
+        print(f"    Version: {match['format'].version or 'N/A'}")
+        print(f"    MIME Type: {match['format'].mime or 'N/A'}")
+        print(f"    Matching Signature: {match['signature_name']}")
 else:
     print(f"No format match found for {file_to_identify}.")
 

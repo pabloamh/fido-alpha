@@ -20,7 +20,9 @@ PRONOM format signatures SOAP calls.
 import logging
 import requests
 import xml.etree.ElementTree as ET
+from typing import Dict, Tuple, Any
 
+from ..config import PRONOM_DEFAULTS
 from fido import __version__
 
 
@@ -29,7 +31,7 @@ class PronomServiceError(Exception):
 
 ENCODING = 'utf-8'
 XML_PROC = '<?xml version="1.0" encoding="{}"?>'.format(ENCODING)
-TNA_DOMAIN = 'nationalarchives.gov.uk'
+TNA_DOMAIN: str = 'nationalarchives.gov.uk'
 PRONOM_HOST = 'www.{}'.format(TNA_DOMAIN)
 PRONOM_NS = 'http://pronom.{}'.format(TNA_DOMAIN)
 SIG_NS = 'http://{}/pronom/SignatureFile'.format(PRONOM_HOST)
@@ -42,21 +44,21 @@ NS = {
     'sig': SIG_NS
 }
 
-HEADERS = {
+HEADERS: Dict[str, str] = {
     'Host': PRONOM_HOST,
     'User-Agent': 'PRONOM UTILS v{0} (OPF)'.format(__version__),
     'Content-type': 'text/xml; charset="UTF-8"'
 }
 
 
-def get_pronom_sig_version():
+def get_pronom_sig_version() -> int:
     """
     Get PRONOM signature version.
 
     Return latest signature file version number as an int.
     Raises an HTTPError if there are problems.
     """
-    tree = _get_soap_ele_tree('getSignatureFileVersionV1')
+    tree: ET.Element = _get_soap_ele_tree('getSignatureFileVersionV1')
     ver_ele = tree.find('.//pronom:Version/pronom:Version', NS)
     return int(ver_ele.text)
 
@@ -69,10 +71,10 @@ def get_droid_signatures(version):
     and a count of the FileFormat elements contained as an integer.
     Upon error, write to `stderr` and return the tuple [], False.
     """
-    xml = []
+    xml: str = ""
     format_count = 0
     try:
-        response = requests.get(f"https://www.nationalarchives.gov.uk/documents/DROID_SignatureFile_V{version}.xml")
+        response = requests.get(PRONOM_DEFAULTS['droid_sig_url'].format(version=version))
         response.raise_for_status()
         xml = response.text
         root_ele = ET.fromstring(xml)
@@ -82,7 +84,7 @@ def get_droid_signatures(version):
     return xml, format_count
 
 
-def _get_soap_ele_tree(soap_action):
+def _get_soap_ele_tree(soap_action: str) -> ET.Element:
     soap_string = '{}<soap:Envelope xmlns:xsi="{}" xmlns:xsd="{}" xmlns:soap="{}"><soap:Body><{} xmlns="{}" /></soap:Body></soap:Envelope>'.format(XML_PROC, NS.get('xsi'), NS.get('xsd'), NS.get('soap'), soap_action, PRONOM_NS).encode(ENCODING)
     soap_action = '\"{}:{}In\"'.format(PRONOM_NS, soap_action)
     xml = _get_soap_response(soap_action, soap_string)
@@ -91,12 +93,12 @@ def _get_soap_ele_tree(soap_action):
     return ET.fromstring(xml)
 
 
-def _get_soap_response(soap_action, soap_string):
+def _get_soap_response(soap_action: str, soap_string: bytes) -> str:
     try:
         headers = HEADERS.copy()
         headers['SOAPAction'] = soap_action
         response = requests.post(
-            f'http://{PRONOM_HOST}/pronom/service.asmx',
+            PRONOM_DEFAULTS['pronom_service_url'],
             data=soap_string,
             headers=headers
         )
