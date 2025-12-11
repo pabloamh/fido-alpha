@@ -19,13 +19,16 @@ from xml.etree import ElementTree as CET
 import zipfile
 from pathlib import Path
 
-from . import __version__, CONFIG_DIR, query_yes_no 
+from . import __version__, CONFIG_DIR, FidoError
 from .prepare import run as prepare_pronom_to_fido
 from .versions import get_local_versions
 from .pronom.soap import get_pronom_sig_version, get_droid_signatures, NS
 from .pronom.http import get_sig_xml_for_puid
+from .cli import query_yes_no
 
 ABORT_MSG = 'Aborting update...'
+class UpdateSignaturesError(FidoError):
+    """Update Signatures Error."""
 
 DEFAULTS = {
     'signatureFileName': 'DROID_SignatureFile-v{0}.xml',
@@ -70,7 +73,7 @@ def run(defaults=None):
         prepare_pronom_to_fido()
         logging.info("FIDO signatures successfully updated")
 
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, UpdateSignaturesError):
         sys.exit(ABORT_MSG)
 
 
@@ -88,7 +91,7 @@ def sig_version_check(version='latest'):
     if sig_file_name.is_file():
         logging.warning("You already have the PRONOM signature file, version %s", version)
         if not query_yes_no("Update anyway?"):
-            raise InterruptedError(ABORT_MSG)
+            raise UpdateSignaturesError(ABORT_MSG)
     return version, sig_file_name
 
 
@@ -208,15 +211,13 @@ def update_versions_xml(version):
 def main():
     """Main CLI entrypoint."""
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-    parser = ArgumentParser(description='Download and convert the latest PRONOM signatures')
-    parser.add_argument('-tmpdir', default=OPTIONS['tmp_dir'], help='Location to store temporary files', dest='tmp_dir')
-    parser.add_argument('-keep_tmp', default=OPTIONS['deleteTempDirectory'], help='Do not delete temporary files after completion', dest='deleteTempDirectory', action='store_false')
-    parser.add_argument('-http_throttle', default=OPTIONS['http_throttle'], help='Time (in seconds) to wait between downloads', type=float, dest='http_throttle')
-    parser.add_argument('-version', default=OPTIONS['version'], help='Download and convert a specific signature file by version', dest='version')
+    parser = ArgumentParser(description='Download and convert the latest PRONOM signatures', fromfile_prefix_chars='@')
+    parser.add_argument('-tmpdir', help='Location to store temporary files', dest='tmp_dir')
+    parser.add_argument('-keep_tmp', help='Do not delete temporary files after completion', dest='deleteTempDirectory', action='store_false')
+    parser.add_argument('-http_throttle', help='Time (in seconds) to wait between downloads', type=float, dest='http_throttle')
+    parser.add_argument('-version', help='Download and convert a specific signature file by version', dest='version')
     args = parser.parse_args()
-    opts = DEFAULTS.copy()
-    opts.update(vars(args))
-    run(opts)
+    run(vars(args))
 
 
 if __name__ == '__main__':

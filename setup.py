@@ -56,8 +56,8 @@ setup(
     extras_require=EXTRAS,
     packages=find_packages(),
     package_data={'fido': ['*.*', 'conf/*.*', 'signatures/*.*', 'pronom/*.*']},
-    entry_points={'console_scripts': [
-        'fido = fido.fido:main',
+    entry_points={'console_scripts': [ 
+        'fido = fido.cli:main',
         'fido-prepare = fido.prepare:main',
         'fido-update-signatures = fido.update_signatures:main',
         'fido-toxml = fido.toxml:main',

@@ -16,13 +16,8 @@ PRONOM is available from http://www.nationalarchives.gov.uk/pronom/
 """
 
 import importlib.resources as importlib_resources
-import requests
-import logging
-import sys
-import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
-from xml.etree.ElementTree import parse, ParseError
 
 from fido import CONFIG_DIR
 
@@ -60,7 +55,7 @@ class LocalVersions(object):
         self.versions_file = versions_file
         self.conf_dir = Path(versions_file).parent.resolve()
         try:
-            self.tree = parse(versions_file)
+            self.tree = ET.parse(versions_file)
             self.root = self.tree.getroot()
         except (ParseError, IOError):
             self.root = ET.Element(self.ROOT_ELEMENT)
@@ -102,99 +97,3 @@ class LocalVersions(object):
 def get_local_versions(config_dir=CONFIG_DIR):
     """Return an instance of LocalVersions loaded with `conf/versions.xml`."""
     return LocalVersions(str(Path(config_dir) / 'versions.xml'))
-
-
-def sig_file_actions(sig_act):
-    """Process signature file update actions."""
-    versions = get_local_versions()
-    sig_vers = versions.pronom_version
-
-    # Get update URL, add trailing slash if missing
-    update_url = versions.update_site
-    if not update_url.endswith('/'):
-        update_url += '/'
-
-    # Parse parameter and take appropriate action
-    if sig_act == 'list':
-        # List available signature files
-        _list_available_versions(update_url)
-    elif sig_act in ['check', 'update']:
-        # Check or/and update signature file to latest
-        _check_update_signatures(sig_vers, update_url, versions, sig_act == 'update')
-    else:
-        # Download a specific version of the signature file
-        _download_sig_version(sig_act, update_url, versions)
-    sys.stdout.flush()
-    sys.exit(0)
-
-
-def _list_available_versions(update_url):
-    """List available signature files."""
-    resp = requests.get(update_url + 'format/')
-    tree = ET.fromstring(resp.content) # type: ignore
-    logging.info('Available signature versions:')
-    for child in tree.iter('signature'): # type: ignore
-        logging.info(child.get('version'))
-
-
-def _check_update_signatures(sig_vers, update_url, versions, is_update=False):
-    is_new, latest = _version_check(sig_vers, update_url)
-    if is_new:
-        sys.stdout.write('Updated signatures v{} are available, current version is v{}\n'.format(latest, sig_vers))
-        if is_update:
-            _output_details(str(latest), update_url, versions)
-    else:
-        logging.info('Your signature files are up to date, current version is v%s', sig_vers)
-    sys.exit(0)
-
-
-def _download_sig_version(sig_act, update_url, versions):
-    logging.info('Downloading signature files for version %s', sig_act)
-    ver = sig_act
-    if not ver.startswith('v'):
-        ver = 'v' + sig_act
-    if not (ver[1:].isdigit()):
-        logging.error('%s is not a valid version number, to download a sig file try "-sig v104" or "-sig 104".', sig_act)
-        sys.exit(1)
-    resp = requests.get(update_url + 'format/' + ver + '/')
-    if resp.status_code != 200:
-        sys.exit('No signature files found for {}, REST status {}'.format(sig_act, resp.status_code))
-    _output_details(ver[1:], update_url, versions)
-
-
-def _get_version(ver_string):
-    """Parse a PROMOM version number from a string."""
-    match = re.search(r'^v?(\d+)$', ver_string, re.IGNORECASE)
-    if not match: # type: ignore
-        logging.error('%s is not a valid version number, to download a sig file try "-sig v104" or "-sig 104".', ver_string)
-        sys.exit(1)
-    ver = ver_string
-    return ver_string if not ver.startswith('v') else ver_string[1:]
-
-
-def _output_details(version, update_url, versions):
-    logging.info('Updating signature file to %s.', version)
-    _write_sigs(version, update_url, 'fido', 'formats-v{}.xml')
-    _write_sigs(version, update_url, 'droid', 'DROID_SignatureFile-v{}.xml')
-    _write_sigs(version, update_url, 'pronom', 'pronom-xml-v{}.zip')
-    versions.pronom_version = str(version)
-    versions.pronom_signature = 'formats-v{}.xml'.format(version)
-    versions.write()
-
-
-def _version_check(sig_ver, update_url):
-    resp = requests.get(update_url + 'format/latest/')
-    if resp.status_code != 200: # type: ignore
-        logging.error('Error getting latest version info: HTTP Status %s', resp.status_code)
-        sys.exit(1)
-    root_ele = ET.fromstring(resp.text)
-    latest = _get_version(root_ele.get('version'))
-    return int(latest) > int(sig_ver), latest
-
-
-def _write_sigs(latest, update_url, type, name_template):
-    sig_out = str(importlib_resources.files('fido').joinpath('conf', name_template.format(latest)))
-    if Path(sig_out).exists():
-        return
-    resp = requests.get(update_url + 'format/{0}/{1}/'.format(latest, type))
-    open(sig_out, 'wb').write(resp.content)

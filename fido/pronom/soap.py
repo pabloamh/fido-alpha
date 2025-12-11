@@ -17,11 +17,16 @@ limitations under the License.
 
 PRONOM format signatures SOAP calls.
 """
-import sys
+import logging
 import requests
 import xml.etree.ElementTree as ET
 
 from fido import __version__
+
+
+class PronomServiceError(Exception):
+    """Custom exception for PRONOM service errors."""
+
 ENCODING = 'utf-8'
 XML_PROC = '<?xml version="1.0" encoding="{}"?>'.format(ENCODING)
 TNA_DOMAIN = 'nationalarchives.gov.uk'
@@ -73,7 +78,7 @@ def get_droid_signatures(version):
         root_ele = ET.fromstring(xml)
         format_count = len(root_ele.findall('.//{http://www.nationalarchives.gov.uk/pronom/SignatureFile}FileFormat'))
     except requests.exceptions.RequestException as httpe:
-        sys.stderr.write(f"get_droid_signatures(): could not download signature file v{version} due to exception: {httpe}\n")
+        logging.warning("get_droid_signatures(): could not download signature file v{version} due to exception: %s", httpe)
     return xml, format_count
 
 
@@ -98,4 +103,4 @@ def _get_soap_response(soap_action, soap_string):
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
-        raise IOError(f"There was a problem contacting the PRONOM service: {e}") from e
+        raise PronomServiceError(f"There was a problem contacting the PRONOM service: {e}") from e
