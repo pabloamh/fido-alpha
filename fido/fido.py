@@ -4,8 +4,6 @@ Format Identification for Digital Objects (FIDO).
 FIDO is a command-line tool to identify the file formats of digital objects.
 It is designed for simple integration into automated work-flows.
 """
-
-import os
 import re
 from collections import deque
 from pathlib import Path
@@ -161,8 +159,8 @@ class Fido:
         Returns a list of match dictionaries.
         """
         matches = []
+        size: int = Path(filename).stat().st_size
         with open(str(filename), 'rb') as f:
-            size: int = os.fstat(f.fileno()).st_size
             bofbuffer, eofbuffer, _ = self.get_buffers(f, size, seekable=True)
         
         signature_matches = self.match_formats(bofbuffer, eofbuffer)
@@ -377,12 +375,17 @@ class Fido:
             # print "Unexpected error:", sys.exc_info()[0], e
             # sys.stdout.write('***', self.get_puid(format), regex)
 
-        result = [match for match in result if self.as_good_as_any(match['format'], result)]
-        return result
+        # Filter out inferior matches in-place if possible, or with a new list if not.
+        final_result = []
+        for match in result:
+            if self.as_good_as_any(match['format'], result):
+                final_result.append(match)
+
+        return final_result
 
     def match_extensions(self, filename: str) -> List[Dict[str, Any]]:
         """Return the list of (format, self.externalsig) for every format whose extension matches the filename."""
-        myext = os.path.splitext(filename)[1].lower().lstrip(".")
+        myext = Path(filename).suffix.lower().lstrip(".")
         result: List[Dict[str, Any]] = []
         if not myext:
             return result

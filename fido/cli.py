@@ -21,14 +21,14 @@ from .utils import PerfTimer
 
 def list_files(roots, recurse=False):
     """Return the files one at a time. Roots could be a fileobj or a list."""
-    for root_path in roots:
-        root = Path(root_path.strip())
+    for root_str in roots:
+        root = Path(root_str.strip())
         if root.is_file():
-            yield str(root)
+            yield root
         else:
             for p in root.rglob("*") if recurse else root.glob("*"):
                 if p.is_file():
-                    yield str(p)
+                    yield p
                 if not recurse:
                     break
 

@@ -24,19 +24,15 @@ from .fido import Fido
 from .models import FileFormat
 
 
-def print_summary(count: int, secs: float, quiet: bool) -> None:
-    """Print summary information on the number of matches and time taken."""
-    if not quiet:
-        rate = int(round(count / secs)) if secs != 0 else 9999
-        print('FIDO: Processed %6d files in %6.2f msec, %2d files/sec' % (count, secs * 1000, rate), file=sys.stderr)
+class Info:
+    """A data class to hold match information for reporting."""
+    pass
 
 
 def print_matches(fido_instance: Fido, fullname: str, matches: List[Dict[str, Any]], delta_t: float, matchtype: str = '') -> None:
     """
     The default match handler. Prints out information for each match in the list.
     """
-    class Info:
-        pass
     obj = Info()
     obj.count = fido_instance.current_count
     obj.group_size = len(matches)
@@ -55,3 +51,10 @@ def print_matches(fido_instance: Fido, fullname: str, matches: List[Dict[str, An
             obj.mimetype = match_data.get('mime')
             obj.version = match_data.get('version')
             sys.stdout.write(DEFAULTS['printmatch'].format(info=obj))
+
+
+def print_summary(count: int, secs: float, quiet: bool) -> None:
+    """Print summary information on the number of matches and time taken."""
+    if not quiet:
+        rate = int(round(count / secs)) if secs != 0 else 9999
+        print(f'FIDO: Processed {count:6d} files in {secs * 1000:6.2f} msec, {rate:2d} files/sec', file=sys.stderr)

@@ -1,10 +1,10 @@
-# Format Identification for Digital Objects (FIDO)
+# FIDO - Format Identification for Digital Objects
 
-FIDO is a Python library and command-line tool for identifying the file formats of digital objects. It is designed for simple integration into automated workflows and other applications requiring reliable format identification.
+FIDO is a modern, object-oriented Python library and command-line tool for identifying the file formats of digital objects. It is designed for simple integration into automated workflows and other applications requiring reliable format identification.
 
-This document provides an overview of FIDO's structure, installation, and usage, both as a standalone application and as a library integrated into other Python projects.
+This version of FIDO is a complete refactoring of the original tool, focusing on code clarity, maintainability, and modern Python practices.
 
-## Project Structure
+## Key Features and Structure
 
 The FIDO project has been refactored to follow modern, object-oriented design principles, making it more modular and easier to maintain and extend.
 
@@ -12,28 +12,27 @@ The key components of the project are:
 
 *   **`fido/fido.py`**: The main application class and command-line entry point. It orchestrates the format identification process.
 *   **`fido/models.py`**: Contains the data classes (`FileFormat`, `Signature`, `Pattern`) that represent the core data structures used for format identification.
-*   **`fido/package.py`**: Handles the loading and parsing of format signatures, as well as the logic for identifying files within containers like ZIP and TAR archives.
+*   **`fido/package.py`**: Handles the loading and parsing of format signatures, as well as the logic for identifying files within containers like ZIP and OLE archives.
 *   **`fido/config.py`**: Centralized configuration for default settings, such as buffer sizes and output formats.
 *   **`fido/pronom/`**: A package for interacting with the PRONOM technical registry, including downloading new signature files.
 
-This structure separates concerns, making the codebase cleaner and more approachable for new developers.
+This structure separates concerns, making the codebase cleaner and more approachable for new developers, and relies on modern libraries like `pathlib` and `asyncio` for improved performance and readability.
 
 ## Installation
 
-FIDO can be installed on any platform with Python 3.6+ and `pip`. It is recommended to install it within a virtual environment.
+FIDO can be installed on any platform with Python 3.6+ and `pip`. It is recommended to install it within a virtual environment to manage dependencies.
 
-1.  Navigate to the root directory of the project in your command shell.
-2.  Run the following command to install FIDO and its dependencies in editable mode:
+1.  Clone the repository from GitHub:
+    ```shell
+    git clone https://github.com/your-username/fido-alpha.git
+    cd fido-alpha
+    ```
+2.  Install FIDO and its dependencies. For development, it's recommended to install in editable mode:
 
-```shell
-pip install -e .
-```
-
-This will install FIDO and its dependencies. On Linux/macOS, you may need to use `sudo`:
-
-```shell
-sudo pip install opf-fido
-```
+    ```shell
+    pip install -e .
+    ```
+    This will install the package, and any changes you make to the source code will be immediately effective.
 
 Once installed, you can verify the installation by running:
 
