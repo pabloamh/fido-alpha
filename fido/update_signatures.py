@@ -12,7 +12,6 @@ PRONOM is available from http://www.nationalarchives.gov.uk/pronom/.
 import asyncio
 import aiohttp
 from argparse import ArgumentParser
-from shutil import rmtree
 import logging
 import sys
 import time
@@ -76,7 +75,6 @@ def run(defaults=None) -> None:
 
     except (KeyboardInterrupt, UpdateSignaturesError):
         sys.exit(ABORT_MSG)
-
 
 def sig_version_check(version: str = 'latest') -> Tuple[int, Path]:
     """Return a tuple consisting of current sig file version and the derived file name."""
@@ -149,7 +147,7 @@ async def download_sig(session: aiohttp.ClientSession, format_ele: CET.Element, 
         return
 
     try:
-        xml = await get_sig_xml_for_puid_async(session, puid)
+        xml = await get_sig_xml_for_puid_async(session, puid) # type: ignore
         with open(str(filename), 'wb') as file_:
             file_.write(xml)
         time.sleep(defaults['http_throttle'])
@@ -192,12 +190,11 @@ def create_zip_file(options: Dict, format_eles: List[CET.Element], version: int,
                 if options['deleteTempDirectory']:
                     filename.unlink()
 
-
 def get_puid_file_name(format_ele: CET.Element) -> Tuple[str, str]:
     """Return a tupe of PUID and PUID file name derived from format_ele."""
     puid = format_ele.get('PUID')
     type_part, num_part = puid.split("/")
-    return puid, 'puid.{}.{}.xml'.format(type_part, num_part)
+    return 'puid.{}.{}.xml'.format(type_part, num_part)
 
 
 def update_versions_xml(version: int) -> None:

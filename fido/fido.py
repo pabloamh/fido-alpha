@@ -142,15 +142,6 @@ class Fido:
             signatures[path][puid].append(format_signature_attributes(el))
         return signatures
 
-
-    def get_puid(self, format_obj: FileFormat) -> str:
-        """Return the PUID for the format."""
-        return format_obj.puid
-
-    def get_extension(self, format: FileFormat) -> Optional[str]:
-        """Return the extension for a format."""
-        return format.extensions[0] if format.extensions else None
-
     def identify_file(self, filename: str, extension: bool = True) -> List[Dict[str, Any]]:
         """
         Identify the type of @param filename.
@@ -289,7 +280,7 @@ class Fido:
                 f2 = match['format']
                 if f1 == f2:
                     continue
-                if self.get_puid(f1) in f2.has_priority_over:
+                if f1.puid in f2.has_priority_over:
                     return False
         return True
 
