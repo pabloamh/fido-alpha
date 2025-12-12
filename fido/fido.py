@@ -4,9 +4,11 @@ Format Identification for Digital Objects (FIDO).
 FIDO is a command-line tool to identify the file formats of digital objects.
 It is designed for simple integration into automated work-flows.
 """
+import asyncio
 import re
 from collections import deque
 from pathlib import Path
+from aiopath import AsyncPath
 from xml.etree import ElementTree as ET
 
 from fido import __version__, CONFIG_DIR
@@ -15,7 +17,7 @@ from fido.package import OlePackage, SignatureLoader, ZipPackage
 from fido.char_handler import escape
 from fido.utils import perf_counter, query_yes_no
 from fido.models import FileFormat
-from typing import List, Dict, Tuple, Optional, Any, IO, Union
+from typing import List, Dict, Tuple, Optional, Any, IO, Union, AsyncIterator
 
 try:
     from lxml import etree
@@ -167,6 +169,32 @@ class Fido:
 
         return matches
 
+    async def identify_file_async(self, filename: str, extension: bool = True) -> List[Dict[str, Any]]:
+        """
+        Asynchronously identify the type of @param filename.
+
+        If the file is a container, it will also identify the contents.
+        Returns a list of match dictionaries.
+        """
+        matches = []
+        apath = AsyncPath(filename)
+        size: int = (await apath.stat()).st_size
+        async with apath.open('rb') as f:
+            bofbuffer, eofbuffer, _ = await self.get_buffers_async(f, size, seekable=True)
+
+        signature_matches = self.match_formats(bofbuffer, eofbuffer)
+        matches.extend(self._format_matches(signature_matches, filename, "signature"))
+
+        container_type = self.container_type(signature_matches)
+        if container_type:
+            matches.extend(await self.match_container_contents_async(filename, container_type))
+
+        if not matches and extension:
+            extension_matches = self.match_extensions(filename)
+            matches.extend(self._format_matches(extension_matches, filename, "extension"))
+
+        return matches
+
     def identify_stream(self, stream: IO[bytes], filename: Optional[str], extension: bool = True) -> Tuple[List[Dict[str, Any]], int]:
         """
         Identify the type of @param stream.
@@ -267,6 +295,54 @@ class Fido:
             self.blocking_read(stream, r)
             # and read the remaining bufsize bytes into the eofbuffer
             eofbuffer = self.blocking_read(stream, self.bufsize)
+        return bofbuffer, eofbuffer, bytes_to_read
+
+    async def get_buffers_async(self, stream: AsyncIterator[bytes], length: Optional[int] = None, seekable: bool = False) -> Tuple[bytes, bytes, int]:
+        """
+        Asynchronously return buffers from the beginning and end of stream.
+
+        Includes number of bytes read if there may be more bytes in the stream.
+
+        If length is None, return the length as found.
+        If seekable is False, the steam does not support a seek operation.
+        """
+        bytes_to_read = self.bufsize if length is None else min(length, self.bufsize)
+        bofbuffer = await stream.read(bytes_to_read)
+        bytes_read = len(bofbuffer)
+
+        if length is None:
+            # A stream with unknown length; have to keep two buffers around
+            # Use a deque for efficient fixed-size buffer management
+            last_two_buffers = deque([bofbuffer], maxlen=2)
+            while True:
+                buffer = await stream.read(self.bufsize)
+                bytes_read += len(buffer)
+                if len(buffer) == self.bufsize:
+                    last_two_buffers.append(buffer)
+                else:
+                    eofbuffer = last_two_buffers[0] if len(buffer) == 0 else last_two_buffers[0][-(self.bufsize - len(buffer)):] + buffer
+                    break
+            return bofbuffer, eofbuffer, bytes_read
+
+        bytes_unread = length - len(bofbuffer)
+        if bytes_unread == 0:
+            eofbuffer = bofbuffer
+        elif bytes_unread < self.bufsize:
+            # The buffs overlap
+            eofbuffer = bofbuffer[bytes_unread:] + await stream.read(bytes_unread)
+        elif bytes_unread == self.bufsize:
+            eofbuffer = await stream.read(self.bufsize)
+        elif seekable:  # easy case when we can just seek!
+            await stream.seek(length - self.bufsize)
+            eofbuffer = await stream.read(self.bufsize)
+        else:
+            # This part for non-seekable streams of known length is complex and less common.
+            # For now, we'll re-read, but a more optimized solution could be implemented if needed.
+            await stream.seek(0)
+            # Simplified for this example; a full async implementation would avoid re-reading the whole stream.
+            content = await stream.read()
+            eofbuffer = content[-self.bufsize:]
+
         return bofbuffer, eofbuffer, bytes_to_read
 
     def as_good_as_any(self, f1: FileFormat, match_list: List[Dict[str, Any]]) -> bool:
@@ -410,6 +486,38 @@ class Fido:
         if package_class and signatures:
             package = package_class(filename, signatures)
             detected_puids = package.detect_formats()
+            for puid in detected_puids:
+                if puid in self.puid_format_map:
+                    file_format = self.puid_format_map[puid]
+                    results.append({
+                        'filename': filename,
+                        'puid': puid,
+                        'format_name': file_format.name,
+                        'version': file_format.version,
+                        'mime': file_format.mime,
+                        'match_type': 'container',
+                        'signature_name': 'Container signature for ' + file_format.name
+                    })
+        return results
+
+    async def match_container_contents_async(self, filename: str, container_type: str) -> List[Dict[str, Any]]:
+        """
+        Asynchronously identify files within a container.
+        """
+        results = []
+        package_class = None
+        signatures = None
+
+        if container_type == "zip":
+            package_class = ZipPackage
+            signatures = self.zip_signatures
+        elif container_type == "ole":
+            package_class = OlePackage
+            signatures = self.ole_signatures
+
+        if package_class and signatures:
+            package = package_class(filename, signatures)
+            detected_puids = await package.detect_formats_async()
             for puid in detected_puids:
                 if puid in self.puid_format_map:
                     file_format = self.puid_format_map[puid]

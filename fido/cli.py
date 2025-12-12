@@ -5,6 +5,7 @@ This module contains the command-line entry point for FIDO and all
 related user interface functions.
 """
 from argparse import ArgumentParser, RawTextHelpFormatter
+import asyncio
 import sys
 from pathlib import Path
 import logging
@@ -18,6 +19,19 @@ from .update_signatures import run as update_signatures
 from .reporters import print_matches, print_summary
 from .utils import PerfTimer
 
+async def identify_and_print_async(fido_instance, file, timer, noextension):
+    """Helper coroutine to identify a single file and print matches."""
+    try:
+        matches = await fido_instance.identify_file_async(file, extension=not noextension)
+        for match in matches:
+            print_matches(fido_instance, match['filename'], [match], timer.duration(), match['match_type'])
+    except (IOError, RuntimeError) as e:
+        sys.stderr.write(f"FIDO: Error processing {file}: {e}\n")
+
+async def process_files_async(fido_instance, files, timer, noextension, recurse):
+    """Process a list of files concurrently."""
+    tasks = [identify_and_print_async(fido_instance, file, timer, noextension) for file in list_files(files, recurse)]
+    await asyncio.gather(*tasks)
 
 def list_files(roots, recurse=False):
     """Return the files one at a time. Roots could be a fileobj or a list."""
@@ -135,14 +149,7 @@ def main(args=None):
                 fido_instance.current_filesize = size
                 print_matches(fido_instance, args.filename or 'STDIN', matches, timer.duration(), 'stream')
         else:
-            for file in list_files(args.files, args.recurse):
-                try:
-                    matches = fido_instance.identify_file(file, extension=not args.noextension)
-                    for match in matches:
-                        print_matches(fido_instance, match['filename'], [match], timer.duration(), match['match_type'])
-
-                except (IOError, RuntimeError) as e:
-                    sys.stderr.write("FIDO: Error processing {}: {}\n".format(file, e))
+            asyncio.run(process_files_async(fido_instance, args.files, timer, args.noextension, args.recurse))
     except KeyboardInterrupt:
         sys.stdout.flush()
         sys.stderr.flush()

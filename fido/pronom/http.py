@@ -36,3 +36,10 @@ async def get_sig_xml_for_puid_async(session: aiohttp.ClientSession, puid: str) 
     async with session.get(url) as response:
         response.raise_for_status()
         return await response.read()
+
+
+async def get_url_content_async(session: aiohttp.ClientSession, url: str) -> bytes:
+    """Asynchronously fetches the content of a given URL."""
+    async with session.get(url) as response:
+        response.raise_for_status()
+        return await response.content

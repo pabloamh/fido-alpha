@@ -22,7 +22,7 @@ from pathlib import Path
 from . import __version__, CONFIG_DIR, FidoError
 from .prepare import run as prepare_pronom_to_fido
 from .versions import get_local_versions, LocalVersions
-from .pronom.soap import get_pronom_sig_version, get_droid_signatures, NS
+from .pronom.soap import get_pronom_sig_version_async, get_droid_signatures_async, NS
 from .pronom.http import get_sig_xml_for_puid
 from .cli import query_yes_no
 
@@ -45,43 +45,46 @@ OPTIONS = {
 }
 
 
-def run(defaults=None) -> None:
+async def run_async(defaults=None) -> None:
     """
-    Update PRONOM signatures.
+    Asynchronously update PRONOM signatures.
 
     Interactive script, requires keyboard input.
     """
     print("FIDO signature updater v{}".format(__version__))
     options = {**OPTIONS, **(defaults or {})}
-    try:
-        logging.info("Contacting PRONOM...")
-        latest, sig_file = sig_version_check(options.get('version'))
-        download_sig_file(latest, sig_file)
-        logging.info("Extracting PRONOM PUID's from signature file...")
-        tree = CET.parse(sig_file)
-        format_eles = tree.findall('.//sig:FileFormat', NS)
-        logging.info("Found %s PRONOM FileFormat elements", len(format_eles))
-        tmpdir, resume = init_sig_download(options) # type: ignore
-        download_signatures(options, format_eles, resume, tmpdir)
-        create_zip_file(options, format_eles, latest, tmpdir)
-        if options['deleteTempDirectory']:
-            logging.info("Deleting temporary folder and files...")
-            rmtree(tmpdir, ignore_errors=True)
-        update_versions_xml(latest)
+    async with aiohttp.ClientSession() as session:
+        try:
+            logging.info("Contacting PRONOM...")
+            latest, sig_file = await sig_version_check_async(session, options.get('version'))
+            await download_sig_file_async(session, latest, sig_file)
+            logging.info("Extracting PRONOM PUID's from signature file...")
+            tree = CET.parse(str(sig_file))
+            format_eles = tree.findall('.//sig:FileFormat', NS)
+            logging.info("Found %s PRONOM FileFormat elements", len(format_eles))
+            tmpdir, resume = init_sig_download(options) # type: ignore
+            await download_signatures_async(options, format_eles, resume, tmpdir)
+            create_zip_file(options, format_eles, latest, tmpdir)
+            if options['deleteTempDirectory']:
+                logging.info("Deleting temporary folder and files...")
+                # shutil.rmtree is blocking, but acceptable for this cleanup task.
+                from shutil import rmtree
+                rmtree(tmpdir, ignore_errors=True)
+            update_versions_xml(latest)
 
-        logging.info("Preparing to convert PRONOM formats to FIDO signatures...")
-        prepare_pronom_to_fido()
-        logging.info("FIDO signatures successfully updated")
+            logging.info("Preparing to convert PRONOM formats to FIDO signatures...")
+            prepare_pronom_to_fido()
+            logging.info("FIDO signatures successfully updated")
 
-    except (KeyboardInterrupt, UpdateSignaturesError):
-        sys.exit(ABORT_MSG)
+        except (KeyboardInterrupt, UpdateSignaturesError):
+            sys.exit(ABORT_MSG)
 
-def sig_version_check(version: str = 'latest') -> Tuple[int, Path]:
+async def sig_version_check_async(session: aiohttp.ClientSession, version: str = 'latest') -> Tuple[int, Path]:
     """Return a tuple consisting of current sig file version and the derived file name."""
     logging.info('Sig version check for version: %s', version)
     if version == 'latest':
         logging.info('Getting latest version number from PRONOM...')
-        version = get_pronom_sig_version()
+        version = await get_pronom_sig_version_async(session)
         if not isinstance(version, int):
             raise RuntimeError('Failed to obtain PRONOM signature file version number, please try again.')
 
@@ -98,10 +101,10 @@ def _sig_file_name(version: int) -> Path:
     return Path(CONFIG_DIR) / DEFAULTS['signatureFileName'].format(version)
 
 
-def download_sig_file(version: int, sig_file: Path) -> None:
+async def download_sig_file_async(session: aiohttp.ClientSession, version: int, sig_file: Path) -> None:
     """Download the latest version of the PRONOM sigs to signatureFile."""
     logging.info("Downloading signature file version %s...", version)
-    sig_xml, _ = get_droid_signatures(version)
+    sig_xml, _ = await get_droid_signatures_async(session, version)
     if not sig_xml:
         raise RuntimeError('Failed to obtain PRONOM signature file, please try again.')
     logging.info("Writing %s...", sig_file.name)
@@ -170,11 +173,6 @@ async def download_signatures_async(defaults: Dict, format_eles: List[CET.Elemen
     print("\nDownload complete.")
 
 
-def download_signatures(defaults: Dict, format_eles: List[CET.Element], resume: bool, tmpdir: Path) -> None:
-    """Wrapper to run the asynchronous download."""
-    asyncio.run(download_signatures_async(defaults, format_eles, resume, tmpdir))
-
-
 def create_zip_file(options: Dict, format_eles: List[CET.Element], version: int, tmpdir: Path) -> None:
     """Create zip file of signatures."""
     logging.info("Creating PRONOM zip...")
@@ -209,7 +207,12 @@ def update_versions_xml(version: int) -> None:
     versions.write()
 
 
-def main() -> None:
+def run(defaults=None) -> None:
+    """Synchronous wrapper for the async run function."""
+    asyncio.run(run_async(defaults))
+
+
+def main(args=None) -> None:
     """Main CLI entrypoint."""
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     parser = ArgumentParser(description='Download and convert the latest PRONOM signatures', fromfile_prefix_chars='@')
@@ -217,7 +220,7 @@ def main() -> None:
     parser.add_argument('-keep_tmp', help='Do not delete temporary files after completion', dest='deleteTempDirectory', action='store_false')
     parser.add_argument('-http_throttle', help='Time (in seconds) to wait between downloads', type=float, dest='http_throttle')
     parser.add_argument('-version', help='Download and convert a specific signature file by version', dest='version')
-    args = parser.parse_args()
+    args = parser.parse_args(args)
     run(vars(args))
 
 

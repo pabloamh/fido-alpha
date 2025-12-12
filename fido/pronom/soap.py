@@ -19,6 +19,7 @@ PRONOM format signatures SOAP calls.
 """
 import logging
 import requests
+import aiohttp
 import xml.etree.ElementTree as ET
 from typing import Dict, Tuple, Any
 
@@ -62,6 +63,16 @@ def get_pronom_sig_version() -> int:
     ver_ele = tree.find('.//pronom:Version/pronom:Version', NS)
     return int(ver_ele.text)
 
+async def get_pronom_sig_version_async(session: aiohttp.ClientSession) -> int:
+    """
+    Asynchronously get PRONOM signature version.
+
+    Return latest signature file version number as an int.
+    Raises an HTTPError if there are problems.
+    """
+    tree: ET.Element = await _get_soap_ele_tree_async(session, 'getSignatureFileVersionV1')
+    ver_ele = tree.find('.//pronom:Version/pronom:Version', NS)
+    return int(ver_ele.text)
 
 def get_droid_signatures(version):
     """
@@ -83,11 +94,38 @@ def get_droid_signatures(version):
         logging.warning("get_droid_signatures(): could not download signature file v{version} due to exception: %s", httpe)
     return xml, format_count
 
+async def get_droid_signatures_async(session: aiohttp.ClientSession, version: int) -> Tuple[str, int]:
+    """
+    Asynchronously get a DROID signature file by version.
+
+    Return a tuple comprising the requested signature XML file as string
+    and a count of the FileFormat elements contained as an integer.
+    Upon error, write to `stderr` and return the tuple [], False.
+    """
+    xml: str = ""
+    format_count = 0
+    try:
+        async with session.get(PRONOM_DEFAULTS['droid_sig_url'].format(version=version)) as response:
+            response.raise_for_status()
+            xml = await response.text()
+            root_ele = ET.fromstring(xml)
+            format_count = len(root_ele.findall('.//{http://www.nationalarchives.gov.uk/pronom/SignatureFile}FileFormat'))
+    except aiohttp.ClientError as httpe:
+        logging.warning("get_droid_signatures_async(): could not download signature file v%s due to exception: %s", version, httpe)
+    return xml, format_count
 
 def _get_soap_ele_tree(soap_action: str) -> ET.Element:
     soap_string = '{}<soap:Envelope xmlns:xsi="{}" xmlns:xsd="{}" xmlns:soap="{}"><soap:Body><{} xmlns="{}" /></soap:Body></soap:Envelope>'.format(XML_PROC, NS.get('xsi'), NS.get('xsd'), NS.get('soap'), soap_action, PRONOM_NS).encode(ENCODING)
     soap_action = '\"{}:{}In\"'.format(PRONOM_NS, soap_action)
     xml = _get_soap_response(soap_action, soap_string)
+    for prefix, uri in NS.items():
+        ET.register_namespace(prefix, uri)
+    return ET.fromstring(xml)
+
+async def _get_soap_ele_tree_async(session: aiohttp.ClientSession, soap_action: str) -> ET.Element:
+    soap_string = '{}<soap:Envelope xmlns:xsi="{}" xmlns:xsd="{}" xmlns:soap="{}"><soap:Body><{} xmlns="{}" /></soap:Body></soap:Envelope>'.format(XML_PROC, NS.get('xsi'), NS.get('xsd'), NS.get('soap'), soap_action, PRONOM_NS).encode(ENCODING)
+    soap_action_header = '"{}:{}"'.format(PRONOM_NS, soap_action)
+    xml = await _get_soap_response_async(session, soap_action_header, soap_string)
     for prefix, uri in NS.items():
         ET.register_namespace(prefix, uri)
     return ET.fromstring(xml)
@@ -105,4 +143,18 @@ def _get_soap_response(soap_action: str, soap_string: bytes) -> str:
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
+        raise PronomServiceError(f"There was a problem contacting the PRONOM service: {e}") from e
+
+async def _get_soap_response_async(session: aiohttp.ClientSession, soap_action: str, soap_string: bytes) -> str:
+    try:
+        headers = HEADERS.copy()
+        headers['SOAPAction'] = soap_action
+        async with session.post(
+            PRONOM_DEFAULTS['pronom_service_url'],
+            data=soap_string,
+            headers=headers
+        ) as response:
+            response.raise_for_status()
+            return await response.text()
+    except aiohttp.ClientError as e:
         raise PronomServiceError(f"There was a problem contacting the PRONOM service: {e}") from e

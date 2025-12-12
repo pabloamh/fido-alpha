@@ -1,6 +1,8 @@
 """Format Identification for Digital Objects."""
 
 from argparse import ArgumentParser
+import asyncio
+import aiohttp
 from functools import cmp_to_key
 import hashlib
 import io
@@ -8,7 +10,6 @@ from xml.dom import minidom
 from xml.etree import ElementTree as ET
 import zipfile
 import logging
-import requests
 import sys
 from urllib.parse import urlparse
 
@@ -127,12 +128,12 @@ class FormatInfo:
                     if format_ is not None:
                         formats.append(format_)
         except Exception as e:
-            print("An error occurred loading '{0}' (exception: {1})".format(self.pronom_files, e), file=sys.stderr)
+            logging.error("An error occurred loading '%s' (exception: %s)", self.pronom_files, e)
             try:
                 if zip_file:
                     zip_file.close()
             except Exception as e:
-                print("An error occured loading '{0}' (exception: {1})".format(self.pronom_files, e), file=sys.stderr)
+                logging.error("An error occurred loading '%s' (exception: %s)", self.pronom_files, e)
                 sys.exit()
         # Replace the formatID with puids in has_priority_over
         if puid_filter is None:
@@ -147,7 +148,7 @@ class FormatInfo:
                     try:
                         rel.text = id_map[rel.text]
                     except KeyError:
-                        print("Error looking up priority over PRONOM ID {0} for format {1}".format(rel.text, element.find('puid').text), file=sys.stderr)
+                        logging.warning("Error looking up priority over PRONOM ID %s for format %s", rel.text, element.find('puid').text)
 
         self._sort_formats(formats)
         self.formats = formats
@@ -217,7 +218,7 @@ class FormatInfo:
                 try:
                     regex = convert_to_regex(byte_seq, 'Little', pos, offset, max_offset)
                 except ValueError as ve:
-                    print('ValueError converting PUID {} signature to regex: {}'.format(puid, ve), file=sys.stderr)
+                    logging.warning('ValueError converting PUID %s signature to regex: %s', puid, ve)
                     regex = FLG_INCOMPATIBLE
 
                 # print "done puid", puid
@@ -276,21 +277,9 @@ class FormatInfo:
                     # Starting with PRONOM 89, some URLs contain http://
                     # and others do not.
                     url = get_text_tna(id, 'Identifier')
-                    if not urlparse(url).scheme:
-                        url = "http://" + url
-                    ET.SubElement(rf, 'dc:identifier').text = url
-                    # And calculate the checksum of this resource:
-                    m = hashlib.md5()
-                    try:
-                        response = requests.get(url)
-                        response.raise_for_status()
-                        m.update(response.content)
-                    except requests.exceptions.RequestException as http_excep:
-                        logging.error('HTTP error loading resource %s: %s', url, http_excep)
-                        if response.status_code == 404:
-                            continue
-
-                    checksum = m.hexdigest()
+                    # Asynchronously fetch and checksum the resource
+                    checksum = asyncio.run(self.fetch_and_checksum_example(url))
+                    ET.SubElement(rf, 'dc:identifier').text = url if urlparse(url).scheme else "http://" + url
                 else:
                     ET.SubElement(rf, 'dc:identifier').text = get_text_tna(id, 'IdentifierType') + ":" + get_text_tna(id, 'Identifier')
             ET.SubElement(rf, 'dcterms:license').text = ""
@@ -306,6 +295,21 @@ class FormatInfo:
         ET.SubElement(md, 'dcterms:modified').text = get_text_tna(pronom_format, 'LastUpdatedDate')
         ET.SubElement(md, 'dc:description').text = get_text_tna(pronom_format, 'ProvenanceDescription')
         return fido_format
+
+    async def fetch_and_checksum_example(self, url: str) -> str:
+        """Asynchronously fetch an example file and return its MD5 checksum."""
+        if not urlparse(url).scheme:
+            url = "http://" + url
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    response.raise_for_status()
+                    content = await response.read()
+                    return hashlib.md5(content).hexdigest()
+        except aiohttp.ClientError as http_excep:
+            logging.error('HTTP error loading resource %s: %s', url, http_excep)
+            return ""
 
     # FIXME: I don't think that this quite works yet!
     def _sort_formats(self, formatlist):

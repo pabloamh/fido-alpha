@@ -3,6 +3,7 @@
 import re
 import tempfile
 import tarfile
+import aiofiles
 from pathlib import Path
 import zipfile 
 from contextlib import closing
@@ -44,6 +45,22 @@ class Package():
 
         return results
 
+    async def _process_puid_map_async(self, data, puid_map):
+        """Asynchronously process PUID map against data."""
+        results = set()
+        loop = asyncio.get_running_loop()
+        tasks = [loop.run_in_executor(None, self._process_matches, data, puid, signatures) for puid, signatures in puid_map.items()]
+        for res in await asyncio.gather(*tasks):
+            results.update(res)
+        return results
+
+    def _process_matches(self, data, puid, signatures):
+        """Synchronously match signatures against data."""
+        results = []
+        for signature in signatures:
+            if re.search(signature["signature"], data):
+                results.append(puid)
+        return results
 
 class OlePackage(Package):
     """OlePackage supports OLE containers."""
@@ -82,6 +99,32 @@ class OlePackage(Package):
         except IOError:
             return []
 
+    async def detect_formats_async(self):
+        """Asynchronously detect available formats inside the OLE container."""
+        try:
+            async with aiofiles.open(self.ole, 'rb') as f:
+                ole_content = await f.read()
+            
+            with olefile.OleFileIO(ole_content) as ole:
+                results = set()
+                for path, puid_map in self.signatures.items():
+                    filepath = None
+                    for paths in ole.listdir():
+                        p = '/'.join(paths)
+                        if p == path or p[1:] == path:
+                            filepath = p
+                            break
+
+                    if filepath is None:
+                        continue
+
+                    with ole.openstream(filepath) as stream:
+                        contents = stream.read()
+                        results.update(await self._process_puid_map_async(contents, puid_map))
+                return results
+        except (IOError, asyncio.CancelledError):
+            return []
+
 
 class ZipPackage(Package):
     """ZipPackage supports Zip containers."""
@@ -110,6 +153,22 @@ class ZipPackage(Package):
 
                 return results
         except (zipfile.BadZipfile, RuntimeError, UnicodeDecodeError):
+            return []
+    
+    async def detect_formats_async(self):
+        """Asynchronously detect available formats inside the ZIP container."""
+        try:
+            async with aiofiles.open(self.zip, 'rb') as f:
+                zip_content = await f.read()
+            
+            with zipfile.ZipFile(io.BytesIO(zip_content)) as zip_:
+                results = set()
+                for path, puid_map in self.signatures.items():
+                    if path in zip_.namelist():
+                        contents = zip_.read(path)
+                        results.update(await self._process_puid_map_async(contents, puid_map))
+                return results
+        except (zipfile.BadZipfile, RuntimeError, UnicodeDecodeError, asyncio.CancelledError):
             return []
 
 
