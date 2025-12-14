@@ -18,12 +18,12 @@ import time
 from xml.etree import ElementTree as CET
 import zipfile
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 from . import __version__, CONFIG_DIR, FidoError
 from .prepare import run as prepare_pronom_to_fido
-from .versions import get_local_versions, LocalVersions
-from .pronom.soap import get_pronom_sig_version_async, get_droid_signatures_async, NS
-from .pronom.http import get_sig_xml_for_puid
+from .pronom import PronomClient
+from .versions import get_local_versions
 from .cli import query_yes_no
 
 ABORT_MSG = 'Aborting update...'
@@ -53,38 +53,40 @@ async def run_async(defaults=None) -> None:
     """
     print("FIDO signature updater v{}".format(__version__))
     options = {**OPTIONS, **(defaults or {})}
-    async with aiohttp.ClientSession() as session:
-        try:
-            logging.info("Contacting PRONOM...")
-            latest, sig_file = await sig_version_check_async(session, options.get('version'))
-            await download_sig_file_async(session, latest, sig_file)
-            logging.info("Extracting PRONOM PUID's from signature file...")
-            tree = CET.parse(str(sig_file))
-            format_eles = tree.findall('.//sig:FileFormat', NS)
-            logging.info("Found %s PRONOM FileFormat elements", len(format_eles))
-            tmpdir, resume = init_sig_download(options) # type: ignore
-            await download_signatures_async(options, format_eles, resume, tmpdir)
-            create_zip_file(options, format_eles, latest, tmpdir)
-            if options['deleteTempDirectory']:
-                logging.info("Deleting temporary folder and files...")
-                # shutil.rmtree is blocking, but acceptable for this cleanup task.
-                from shutil import rmtree
-                rmtree(tmpdir, ignore_errors=True)
-            update_versions_xml(latest)
+    pronom_client = PronomClient()
+    try:
+        logging.info("Contacting PRONOM...")
+        latest, sig_file = await sig_version_check_async(pronom_client, options.get('version'))
+        await download_sig_file_async(pronom_client, latest, sig_file)
+        logging.info("Extracting PRONOM PUID's from signature file...")
+        tree = CET.parse(str(sig_file))
+        format_eles = tree.findall('.//sig:FileFormat', pronom_client.ns)
+        logging.info("Found %s PRONOM FileFormat elements", len(format_eles))
+        tmpdir, resume = init_sig_download(options) # type: ignore
+        await download_signatures_async(pronom_client, options, format_eles, resume, tmpdir)
+        create_zip_file(options, format_eles, latest, tmpdir)
+        if options['deleteTempDirectory']:
+            logging.info("Deleting temporary folder and files...")
+            # shutil.rmtree is blocking, but acceptable for this cleanup task.
+            from shutil import rmtree
+            rmtree(tmpdir, ignore_errors=True)
+        update_versions_xml(latest)
 
-            logging.info("Preparing to convert PRONOM formats to FIDO signatures...")
-            prepare_pronom_to_fido()
-            logging.info("FIDO signatures successfully updated")
+        logging.info("Preparing to convert PRONOM formats to FIDO signatures...")
+        prepare_pronom_to_fido()
+        logging.info("FIDO signatures successfully updated")
 
-        except (KeyboardInterrupt, UpdateSignaturesError):
-            sys.exit(ABORT_MSG)
+    except (KeyboardInterrupt, UpdateSignaturesError):
+        sys.exit(ABORT_MSG)
+    finally:
+        await pronom_client.close_async_session()
 
-async def sig_version_check_async(session: aiohttp.ClientSession, version: str = 'latest') -> Tuple[int, Path]:
+async def sig_version_check_async(pronom_client: PronomClient, version: str = 'latest') -> Tuple[int, Path]:
     """Return a tuple consisting of current sig file version and the derived file name."""
     logging.info('Sig version check for version: %s', version)
     if version == 'latest':
         logging.info('Getting latest version number from PRONOM...')
-        version = await get_pronom_sig_version_async(session)
+        version = await pronom_client.get_pronom_sig_version_async()
         if not isinstance(version, int):
             raise RuntimeError('Failed to obtain PRONOM signature file version number, please try again.')
 
@@ -101,10 +103,10 @@ def _sig_file_name(version: int) -> Path:
     return Path(CONFIG_DIR) / DEFAULTS['signatureFileName'].format(version)
 
 
-async def download_sig_file_async(session: aiohttp.ClientSession, version: int, sig_file: Path) -> None:
+async def download_sig_file_async(pronom_client: PronomClient, version: int, sig_file: Path) -> None:
     """Download the latest version of the PRONOM sigs to signatureFile."""
     logging.info("Downloading signature file version %s...", version)
-    sig_xml, _ = await get_droid_signatures_async(session, version)
+    sig_xml, _ = await pronom_client.get_droid_signatures_async(version)
     if not sig_xml:
         raise RuntimeError('Failed to obtain PRONOM signature file, please try again.')
     logging.info("Writing %s...", sig_file.name)
@@ -140,7 +142,7 @@ def init_sig_download(defaults: Dict) -> Tuple[Path, bool]:
     return tmpdir, resume
 
 
-async def download_sig(session: aiohttp.ClientSession, format_ele: CET.Element, tmpdir: Path, resume: bool, defaults: Dict) -> None:
+async def download_sig(pronom_client: PronomClient, format_ele: CET.Element, tmpdir: Path, resume: bool, defaults: Dict) -> None:
     """
     Asynchronously download an individual PRONOM signature.
     """
@@ -148,28 +150,24 @@ async def download_sig(session: aiohttp.ClientSession, format_ele: CET.Element, 
     filename = tmpdir / puid_filename
     if filename.is_file() and resume:
         return
-
     try:
-        xml = await get_sig_xml_for_puid_async(session, puid) # type: ignore
+        xml = await pronom_client.get_sig_xml_for_puid_async(puid)
         with open(str(filename), 'wb') as file_:
             file_.write(xml)
         time.sleep(defaults['http_throttle'])
     except Exception as e:
         logging.error("Failed to download signature file: %s. Error: %s", puid, e)
 
-
-async def download_signatures_async(defaults: Dict, format_eles: List[CET.Element], resume: bool, tmpdir: Path) -> None:
+async def download_signatures_async(pronom_client: PronomClient, defaults: Dict, format_eles: List[CET.Element], resume: bool, tmpdir: Path) -> None:
     """Download PRONOM signatures and write to individual files."""
     logging.info("Downloading signatures, one moment please...")
-    async with aiohttp.ClientSession() as session:
-        tasks = [download_sig(session, format_ele, tmpdir, resume, defaults) for format_ele in format_eles]
-        
-        puid_count = len(tasks)
-        for i, f in enumerate(asyncio.as_completed(tasks)):
-            await f
-            progress = (i + 1) / puid_count
-            sys.stdout.write(f"\rDownloaded {i+1}/{puid_count} files [{int(progress * 100)}%]")
-            sys.stdout.flush()
+    tasks = [download_sig(pronom_client, format_ele, tmpdir, resume, defaults) for format_ele in format_eles]
+    puid_count = len(tasks)
+    for i, f in enumerate(asyncio.as_completed(tasks)):
+        await f
+        progress = (i + 1) / puid_count
+        sys.stdout.write(f"\rDownloaded {i+1}/{puid_count} files [{int(progress * 100)}%]")
+        sys.stdout.flush()
     print("\nDownload complete.")
 
 

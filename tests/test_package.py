@@ -1,9 +1,9 @@
 import os
-
+from pathlib import Path
 from fido.package import ZipPackage
 
 
-FIXTURES_DIR = os.path.normpath(os.path.join(__file__, '..', 'fixtures'))
+FIXTURES_DIR = Path(__file__).parent / 'fixtures'
 
 
 def test_bad_zips():

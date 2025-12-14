@@ -27,6 +27,8 @@ install_requires = [
     'aiohttp',
     'aiofiles',
     'aiopath',
+    'pycdlib',
+    'defusedxml',
 ]
 
 

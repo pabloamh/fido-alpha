@@ -36,3 +36,4 @@ class FileFormat:
     signatures: List[Signature] = field(default_factory=list)
     extensions: List[str] = field(default_factory=list)
     has_priority_over: Set[str] = field(default_factory=set)
+    container: Optional[str] = None

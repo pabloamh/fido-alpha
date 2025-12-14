@@ -1,19 +1,25 @@
 """Support for containers."""
 
+import logging
 import re
 import tempfile
 import tarfile
+import asyncio
 import aiofiles
 from pathlib import Path
+import gzip
 import zipfile 
+import bz2
 from contextlib import closing
+import io
 
 try:
     import olefile
-    from lxml import etree
+    import pycdlib
 except ImportError:
-    import xml.etree.ElementTree as etree
-    
+    olefile = None
+
+from xml.etree import ElementTree as etree
 from .models import FileFormat, Signature, Pattern
 from .char_handler import escape
 
@@ -25,10 +31,20 @@ class Container:
 
     def walk(self, filename, fileobj, extension):
         raise NotImplementedError("Subclasses must implement this method")
+    """Base class for container file processors."""
+    def __init__(self, fido_instance):
+        self.fido = fido_instance
+
+    def walk(self, filename, fileobj, extension):
+        raise NotImplementedError("Subclasses must implement this method")
 
 
 class Package():
     """Base class for container support."""
+
+    async def walk(self):
+        """Async generator to yield (member_name, member_stream, member_size)."""
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def _process_puid_map(self, data, puid_map):
         results = set() 
@@ -172,6 +188,124 @@ class ZipPackage(Package):
             return []
 
 
+async def _parse_cue_sheet_async(filename: str) -> str | None:
+    """
+    A simple, modern async CUE sheet parser to extract the binary file name.
+    This avoids the `cueparser` dependency which relies on `six`.
+    """
+    file_pattern = re.compile(r'^\s*FILE\s+"([^"]+)"', re.IGNORECASE)
+    async with aiofiles.open(filename, mode='r', encoding='utf-8', errors='ignore') as f:
+        async for line in f:
+            match = file_pattern.match(line)
+            if match:
+                return match.group(1)
+    return None
+
+class TarPackage(Package):
+    """TarPackage supports TAR archives."""
+
+    def __init__(self, filename, signatures=None):
+        self.filename = filename
+        self.signatures = signatures
+
+    async def walk(self):
+        """Walk through TAR file members."""
+        try:
+            with tarfile.open(self.filename, 'r') as tar:
+                for member in tar.getmembers():
+                    if member.isfile():
+                        yield member.name, tar.extractfile(member), member.size
+        except tarfile.TarError:
+            return
+
+class GzipPackage(Package):
+    """GzipPackage supports Gzip compressed files."""
+
+    def __init__(self, filename):
+        self.filename = filename
+
+    async def walk(self):
+        """Decompress and yield the single member of a Gzip file."""
+        try:
+            path = Path(self.filename)
+            # Gzip only contains one file, so we derive the name from the archive name.
+            member_name = path.stem
+            with gzip.open(self.filename, 'rb') as f:
+                content = f.read()
+                yield member_name, io.BytesIO(content), len(content)
+        except (gzip.BadGzipFile, EOFError):
+            return
+
+class Bzip2Package(Package):
+    """Bzip2Package supports Bzip2 compressed files."""
+
+    def __init__(self, filename):
+        self.filename = filename
+
+    async def walk(self):
+        """Decompress and yield the single member of a Bzip2 file."""
+        try:
+            path = Path(self.filename)
+            member_name = path.stem
+            with bz2.open(self.filename, 'rb') as f:
+                content = f.read()
+                yield member_name, io.BytesIO(content), len(content)
+        except OSError: # bz2 raises OSError for invalid files
+            return
+
+class IsoPackage(Package):
+    """IsoPackage supports ISO 9660 disk images."""
+
+    def __init__(self, filename):
+        self.filename = filename
+
+    async def walk(self):
+        """Walk through files in an ISO image."""
+        if pycdlib is None:
+            logging.warning("pycdlib is not installed. ISO support is disabled.")
+            return
+
+        try:
+            iso = pycdlib.PyCdlib()
+            iso.open(self.filename)
+            for dirname, _, filelist in iso.walk(iso_path='/'):
+                for filename in filelist:
+                    iso_path = f"{dirname}/{filename}"
+                    try:
+                        member_stream = iso.get_file_from_iso(iso_path=iso_path)
+                        # pycdlib doesn't easily give file size, so we read the stream
+                        content = member_stream.read()
+                        yield iso_path.lstrip('/'), io.BytesIO(content), len(content)
+                    except pycdlib.pycdlibexception.PyCdlibInvalidInput:
+                        continue # Skip unreadable files
+            iso.close()
+        except (pycdlib.pycdlibexception.PyCdlibInvalidInput, IOError):
+            return
+
+class CueBinPackage(Package):
+    """CueBinPackage supports CUE/BIN disk images."""
+
+    def __init__(self, filename):
+        self.filename = filename
+
+    async def walk(self):
+        """Walk through files in a CUE/BIN image."""
+        if pycdlib is None:
+            logging.warning("pycdlib is not installed. CUE/BIN support is disabled.")
+            return
+
+        bin_filename = await _parse_cue_sheet_async(self.filename)
+        if not bin_filename:
+            logging.warning("Could not find a FILE directive in CUE sheet: %s", self.filename)
+            return
+
+        bin_file = Path(self.filename).parent / bin_filename
+        if bin_file.exists():
+            iso_package = IsoPackage(str(bin_file))
+            async for member_info in iso_package.walk():
+                yield member_info
+
+
 class ZipContainer(Container):
     """Processes files within a Zip archive."""
 
@@ -247,11 +381,11 @@ class SignatureLoader:
 
     def _load_fido_xml(self, file_path):
         """Load a FIDO format XML file and parse it."""
-        try:
+        try: # type: ignore
             tree = etree.parse(str(file_path))
             for element in tree.xpath('/formats/format'):
                 self._process_format_element(element)
-        except (ET.ParseError, IOError) as e:
+        except (etree.ParseError, IOError) as e:
             raise RuntimeError(f"Failed to parse signature file {file_path}: {e}")
 
     def _process_format_element(self, element):
@@ -261,12 +395,14 @@ class SignatureLoader:
             return
 
         mime_element = element.find('mime')
+        container_element = element.find('container')
         version_element = element.find('version')
 
         file_format = FileFormat(
             puid=puid,
             name=element.findtext('name', ''),
             version=version_element.text if version_element is not None else None,
+            container=container_element.text if container_element is not None else None,
             mime=mime_element.text if mime_element is not None else None,
             extensions=[ext.text for ext in element.findall('extension') if ext.text],
             has_priority_over={

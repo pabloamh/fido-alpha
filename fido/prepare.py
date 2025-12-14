@@ -9,6 +9,7 @@ import io
 from xml.dom import minidom
 from xml.etree import ElementTree as ET
 import zipfile
+from typing import List
 import logging
 import sys
 from urllib.parse import urlparse
@@ -119,12 +120,23 @@ class FormatInfo:
         If a @param puid is specified, only that one will be loaded.
         """
         formats = []
+        example_urls = {}
         zip_file = None
         try:
             zip_file = zipfile.ZipFile(str(self.pronom_files), 'r')
             for item in zip_file.infolist():
                 with zip_file.open(item) as stream:
-                    format_ = self.parse_pronom_xml(io.BytesIO(stream.read()), puid_filter)
+                    # First pass to gather URLs
+                    pronom_xml = ET.parse(io.BytesIO(stream.read()))
+                    pronom_root = pronom_xml.getroot()
+                    pronom_format = pronom_root.find(TNA('report_format_detail/FileFormat'))
+                    for x in pronom_format.findall(TNA("ReferenceFile")):
+                        for id_ele in x.findall(TNA('DocumentIdentifier')):
+                            if get_text_tna(id_ele, 'IdentifierType') == 'URL':
+                                url = get_text_tna(id_ele, 'Identifier')
+                                example_urls[url] = ""
+
+                    format_ = self.parse_pronom_xml(pronom_xml, puid_filter)
                     if format_ is not None:
                         formats.append(format_)
         except Exception as e:
@@ -135,6 +147,19 @@ class FormatInfo:
             except Exception as e:
                 logging.error("An error occurred loading '%s' (exception: %s)", self.pronom_files, e)
                 sys.exit()
+
+        # Asynchronously fetch all checksums at once
+        if example_urls:
+            checksums = asyncio.run(self.fetch_all_checksums(example_urls.keys()))
+            example_urls.update(zip(example_urls.keys(), checksums))
+
+        # Second pass to insert checksums
+        for fido_format in formats:
+            for rf in fido_format.findall(".//example_file"):
+                url_ele = rf.find("dc:identifier")
+                if url_ele is not None and url_ele.text in example_urls:
+                    rf.find("checksum").text = example_urls[url_ele.text]
+
         # Replace the formatID with puids in has_priority_over
         if puid_filter is None:
             id_map = {}
@@ -153,14 +178,13 @@ class FormatInfo:
         self._sort_formats(formats)
         self.formats = formats
 
-    def parse_pronom_xml(self, source, puid_filter=None):
+    def parse_pronom_xml(self, pronom_xml: ET.ElementTree, puid_filter=None):
         """
         Parse PRONOM XML and convert into FIDO XML.
 
         If a @param puid is specified, only that one will be loaded.
         @return ET.ElementTree Element representing it.
         """
-        pronom_xml = ET.parse(source)
         pronom_root = pronom_xml.getroot()
         pronom_format = pronom_root.find(TNA('report_format_detail/FileFormat'))
         fido_format = ET.Element('format')
@@ -277,15 +301,12 @@ class FormatInfo:
                     # Starting with PRONOM 89, some URLs contain http://
                     # and others do not.
                     url = get_text_tna(id, 'Identifier')
-                    # Asynchronously fetch and checksum the resource
-                    checksum = asyncio.run(self.fetch_and_checksum_example(url))
                     ET.SubElement(rf, 'dc:identifier').text = url if urlparse(url).scheme else "http://" + url
                 else:
                     ET.SubElement(rf, 'dc:identifier').text = get_text_tna(id, 'IdentifierType') + ":" + get_text_tna(id, 'Identifier')
             ET.SubElement(rf, 'dcterms:license').text = ""
             ET.SubElement(rf, 'dc:rights').text = get_text_tna(x, 'ReferenceFileIPR')
             checksumElement = ET.SubElement(rf, 'checksum')
-            checksumElement.text = checksum
             checksumElement.attrib['type'] = "md5"
         # Record Metadata
         md = ET.SubElement(fido_details, 'record_metadata')
@@ -295,6 +316,12 @@ class FormatInfo:
         ET.SubElement(md, 'dcterms:modified').text = get_text_tna(pronom_format, 'LastUpdatedDate')
         ET.SubElement(md, 'dc:description').text = get_text_tna(pronom_format, 'ProvenanceDescription')
         return fido_format
+
+    async def fetch_all_checksums(self, urls: List[str]) -> List[str]:
+        """Asynchronously fetches and checksums a list of URLs."""
+        async with aiohttp.ClientSession() as session:
+            tasks = [self.fetch_and_checksum_example(url, session) for url in urls]
+            return await asyncio.gather(*tasks)
 
     async def fetch_and_checksum_example(self, url: str) -> str:
         """Asynchronously fetch an example file and return its MD5 checksum."""

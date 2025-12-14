@@ -35,16 +35,15 @@ async def process_files_async(fido_instance, files, timer, noextension, recurse)
 
 def list_files(roots, recurse=False):
     """Return the files one at a time. Roots could be a fileobj or a list."""
-    for root_str in roots:
-        root = Path(root_str.strip())
+    for root_path_str in roots:
+        root = Path(root_path_str.strip())
         if root.is_file():
             yield root
-        else:
-            for p in root.rglob("*") if recurse else root.glob("*"):
+        elif root.is_dir():
+            pattern = "**/*" if recurse else "*"
+            for p in root.glob(pattern):
                 if p.is_file():
                     yield p
-                if not recurse:
-                    break
 
 
 def main(args=None):

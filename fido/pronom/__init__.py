@@ -15,6 +15,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-"""FIDO module to deal with all things PRONOM signature files."""
-from . import http, soap
-__all__ = ['http', 'soap']
+"""FIDO module to deal with all things PRONOM."""
+from .client import PronomClient
+from .soap import PronomServiceError
+
+__all__ = [
+    "PronomClient",
+    "PronomServiceError",
+]
