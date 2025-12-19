@@ -38,8 +38,8 @@ class Fido:
         self.puid_format_map = loader.load_signatures()
         self.formats = loader.formats
 
-        self.zip_signatures = None
-        self.ole_signatures = None
+        self.zip_signatures: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+        self.ole_signatures: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
         if containersignature_file:
             self.load_container_signatures(containersignature_file)
             self.containersignature_file: Optional[str] = containersignature_file
@@ -54,9 +54,8 @@ class Fido:
 
     def load_container_signatures(self, containersignature_file: str) -> None:
         """Load container signatures."""
-        if self.containersignature_file is None:
-            return
-        container_file = Path(self.conf_dir).joinpath(containersignature_file)
+        if self.containersignature_file:
+            container_file = Path(self.conf_dir).joinpath(self.containersignature_file)
         self.zip_signatures = self.extract_signatures(container_file, signature_type="ZIP")
         self.ole_signatures = self.extract_signatures(container_file, signature_type="OLE")
 
@@ -527,14 +526,9 @@ class Fido:
         elif package_class:
             package = package_class(filename)
             async for member_name, member_stream, member_size in package.walk():
-                # We have a stream, so we can identify it.
-                # This is a simplified version. A full implementation might need
-                # to handle nested containers recursively.
                 member_matches, _ = self.identify_stream(member_stream, member_name)
                 for match in member_matches:
                     match['filename'] = f"{filename}!{member_name}"
                     match['match_type'] = 'container'
                 results.extend(member_matches)
-
-
         return results

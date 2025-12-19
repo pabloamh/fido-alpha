@@ -1,26 +1,29 @@
 # FIDO - Format Identification for Digital Objects
 
-FIDO is a modern, object-oriented Python library and command-line tool for identifying the file formats of digital objects. It is designed for simple integration into automated workflows and other applications requiring reliable format identification.
+FIDO is a modern, object-oriented Python 3 library and command-line tool for identifying the file formats of digital objects. It is designed for simple integration into automated workflows and other applications requiring reliable format identification.
 
-This version of FIDO is a complete refactoring of the original tool, focusing on code clarity, maintainability, and modern Python practices.
+This version of FIDO is a complete refactoring of the original Python 2 tool, focusing on code clarity, maintainability, and modern Python practices, including extensive use of `asyncio` for high-performance I/O operations.
 
-## Key Features and Structure
+## Key Features
 
-The FIDO project has been refactored to follow modern, object-oriented design principles, making it more modular and easier to maintain and extend.
+The FIDO project has been refactored to follow modern, object-oriented design principles, making it more modular and easier to maintain and extend. Key features include:
 
-The key components of the project are:
+*   **Modern Python 3 Codebase**: Fully migrated from Python 2, removing legacy dependencies like `six` and `futures`.
+*   **Asynchronous I/O**: Utilizes `asyncio` and `aiopath` for high-performance, concurrent file identification, making it ideal for large-scale processing.
+*   **Object-Oriented Design**: A clean, class-based architecture that separates concerns and improves code readability.
+*   **Container Support**: Identifies formats within container files like ZIP, TAR, and OLE archives.
+*   **PRONOM-Based**: Uses the latest format signatures from The UK National Archives' PRONOM technical registry.
+*   **Flexible Usage**: Can be used as a command-line tool or as a library integrated into other Python applications.
 
-*   **`fido/fido.py`**: The main application class and command-line entry point. It orchestrates the format identification process.
-*   **`fido/models.py`**: Contains the data classes (`FileFormat`, `Signature`, `Pattern`) that represent the core data structures used for format identification.
-*   **`fido/package.py`**: Handles the loading and parsing of format signatures, as well as the logic for identifying files within containers like ZIP and OLE archives.
-*   **`fido/config.py`**: Centralized configuration for default settings, such as buffer sizes and output formats.
-*   **`fido/pronom/`**: A package for interacting with the PRONOM technical registry, including downloading new signature files.
-
-This structure separates concerns, making the codebase cleaner and more approachable for new developers, and relies on modern libraries like `pathlib` and `asyncio` for improved performance and readability.
+## Project Structure
+*   **`fido/fido.py`**: The main `Fido` class and command-line entry point.
+*   **`fido/loader.py`**: Handles loading and parsing of PRONOM XML signature files.
+*   **`fido/package.py`**: Logic for handling various container and archive formats (ZIP, TAR, OLE, etc.).
+*   **`fido/pronom.py`**: A package for interacting with the PRONOM registry to update signatures.
 
 ## Installation
 
-FIDO can be installed on any platform with Python 3.6+ and `pip`. It is recommended to install it within a virtual environment to manage dependencies.
+FIDO can be installed on any platform with Python 3.9+ (required for full async support) and `pip`. It is recommended to install it within a virtual environment.
 
 1.  Clone the repository from GitHub:
     ```shell
@@ -28,11 +31,11 @@ FIDO can be installed on any platform with Python 3.6+ and `pip`. It is recommen
     cd fido-alpha
     ```
 2.  Install FIDO and its dependencies. For development, it's recommended to install in editable mode:
-
     ```shell
     pip install -e .
     ```
     This will install the package, and any changes you make to the source code will be immediately effective.
+    For production use, you can install it with `pip install .`.
 
 Once installed, you can verify the installation by running:
 

@@ -57,7 +57,7 @@ class LocalVersions(object):
         try:
             self.tree = ET.parse(versions_file)
             self.root = self.tree.getroot()
-        except (ParseError, IOError):
+        except (ET.ParseError, OSError):
             self.root = ET.Element(self.ROOT_ELEMENT)
             self.tree = ET.ElementTree(self.root)
 
