@@ -18,4 +18,8 @@ limitations under the License.
 class PronomServiceError(Exception):
     """Exception to wrap any exception thrown by the PRONOM service."""
 
-    pass
+    def __init__(self, message, original_error=None):
+        if original_error:
+            message = f"{message} (Caused by: {original_error})"
+        super().__init__(message)
+        self.original_error = original_error
